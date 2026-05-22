@@ -1,30 +1,44 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
+
+const START_FEN = new Chess().fen();
+const STOCKFISH_PATH = "/stockfish/stockfish-nnue-16-single.js";
 
 function App() {
   const [username, setUsername] = useState("");
   const [games, setGames] = useState([]);
-  const [fenHistory, setFenHistory] = useState([new Chess().fen()]);
+  const [fenHistory, setFenHistory] = useState([START_FEN]);
   const [moveHistory, setMoveHistory] = useState([]);
   const [currentMove, setCurrentMove] = useState(0);
 
-  const fen = fenHistory[currentMove] || new Chess().fen();
+  const [engineReady, setEngineReady] = useState(false);
+  const [engineStatus, setEngineStatus] = useState("Loading Stockfish...");
+  const [evaluation, setEvaluation] = useState(null);
+  const [bestMove, setBestMove] = useState(null);
+  const [engineDepth, setEngineDepth] = useState(null);
+
+  const stockfishRef = useRef(null);
+
+  const fen = fenHistory[currentMove] || START_FEN;
 
   const fetchGames = async () => {
     if (!username.trim()) return;
 
     try {
       const response = await fetch(
-  `https://chess-analyzer-e2o0.onrender.com/games/${username.trim()}`
-);
+        `https://chess-analyzer-e2o0.onrender.com/games/${username.trim()}`
+      );
 
       const data = await response.json();
 
       setGames(data);
-      setFenHistory([new Chess().fen()]);
+      setFenHistory([START_FEN]);
       setMoveHistory([]);
       setCurrentMove(0);
+      setEvaluation(null);
+      setBestMove(null);
+      setEngineDepth(null);
     } catch (error) {
       console.log(error);
     }
@@ -33,7 +47,6 @@ function App() {
   const loadGame = (pgn) => {
     try {
       const loadedGame = new Chess();
-
       loadedGame.loadPgn(pgn);
 
       const moves = loadedGame.history();
@@ -48,6 +61,9 @@ function App() {
       setMoveHistory(moves);
       setFenHistory(fens);
       setCurrentMove(0);
+      setEvaluation(null);
+      setBestMove(null);
+      setEngineDepth(null);
     } catch (error) {
       console.log(error);
     }
@@ -64,6 +80,127 @@ function App() {
   const jumpToMove = (moveIndex) => {
     setCurrentMove(Math.max(0, Math.min(moveIndex, fenHistory.length - 1)));
   };
+
+  const formatEvaluation = (score) => {
+    if (!score) return "Analyzing...";
+
+    if (score.type === "mate") {
+      return score.value > 0
+        ? `White mate in ${score.value}`
+        : `Black mate in ${Math.abs(score.value)}`;
+    }
+
+    const pawns = score.value / 100;
+
+    return pawns > 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
+  };
+
+  const getBestMoveSan = (uciMove) => {
+    if (!uciMove || uciMove === "(none)") return "None";
+
+    try {
+      const chess = new Chess(fen);
+
+      const move = chess.move({
+        from: uciMove.slice(0, 2),
+        to: uciMove.slice(2, 4),
+        promotion: uciMove[4] || "q",
+      });
+
+      return move ? `${move.san} (${uciMove})` : uciMove;
+    } catch {
+      return uciMove;
+    }
+  };
+
+  useEffect(() => {
+    const stockfish = new Worker(STOCKFISH_PATH);
+    stockfishRef.current = stockfish;
+
+    stockfish.onmessage = (event) => {
+      const line = String(event.data);
+
+      if (line === "uciok") {
+        stockfish.postMessage("isready");
+        return;
+      }
+
+      if (line === "readyok") {
+        setEngineReady(true);
+        setEngineStatus("Ready");
+        return;
+      }
+
+      if (line.startsWith("info depth")) {
+        const depthMatch = line.match(/depth (\d+)/);
+        const cpMatch = line.match(/score cp (-?\d+)/);
+        const mateMatch = line.match(/score mate (-?\d+)/);
+        const pvMatch = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
+
+        if (depthMatch) {
+          setEngineDepth(Number(depthMatch[1]));
+        }
+
+        const sideToMove = fen.split(" ")[1];
+
+        if (mateMatch) {
+          const mateScore = Number(mateMatch[1]);
+
+          setEvaluation({
+            type: "mate",
+            value: sideToMove === "b" ? -mateScore : mateScore,
+          });
+        } else if (cpMatch) {
+          const centipawns = Number(cpMatch[1]);
+
+          setEvaluation({
+            type: "cp",
+            value: sideToMove === "b" ? -centipawns : centipawns,
+          });
+        }
+
+        if (pvMatch) {
+          setBestMove(pvMatch[1]);
+        }
+
+        return;
+      }
+
+      if (line.startsWith("bestmove")) {
+        const move = line.split(" ")[1];
+
+        if (move) {
+          setBestMove(move);
+        }
+
+        setEngineStatus("Complete");
+      }
+    };
+
+    stockfish.onerror = (error) => {
+      console.log(error);
+      setEngineStatus("Stockfish failed to load");
+    };
+
+    stockfish.postMessage("uci");
+
+    return () => {
+      stockfish.terminate();
+    };
+  }, [fen]);
+
+  useEffect(() => {
+    if (!engineReady || !stockfishRef.current) return;
+
+    setEngineStatus("Analyzing...");
+    setEvaluation(null);
+    setBestMove(null);
+    setEngineDepth(null);
+
+    stockfishRef.current.postMessage("stop");
+    stockfishRef.current.postMessage(`position fen ${fen}`);
+    stockfishRef.current.postMessage("go depth 12");
+  }, [fen, engineReady]);
 
   const chessboardOptions = useMemo(
     () => ({
@@ -102,6 +239,34 @@ function App() {
         }}
       >
         <Chessboard options={chessboardOptions} />
+      </div>
+
+      <div
+        style={{
+          marginTop: "15px",
+          width: "470px",
+          border: "1px solid gray",
+          padding: "15px",
+          backgroundColor: "#f7f7f7",
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>Stockfish Analysis</h3>
+
+        <p>
+          <strong>Status:</strong> {engineStatus}
+        </p>
+
+        <p>
+          <strong>Evaluation:</strong> {formatEvaluation(evaluation)}
+        </p>
+
+        <p>
+          <strong>Best Move:</strong> {getBestMoveSan(bestMove)}
+        </p>
+
+        <p>
+          <strong>Depth:</strong> {engineDepth || "-"}
+        </p>
       </div>
 
       <div style={{ marginTop: "20px" }}>
