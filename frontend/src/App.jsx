@@ -15,16 +15,181 @@ const PIECE_VALUES = {
 };
 
 const QUALITY_STYLES = {
-  Brilliant: { icon: "!!", color: "#2dd4bf" },
-  Great: { icon: "!", color: "#8ab6e6" },
-  Book: { icon: "📖", color: "#d8a46f" },
-  Best: { icon: "★", color: "#8cc84b" },
-  Excellent: { icon: "👍", color: "#8cc84b" },
-  Good: { icon: "✓", color: "#9ccc65" },
-  Inaccuracy: { icon: "?!", color: "#facc15" },
-  Mistake: { icon: "?", color: "#fb923c" },
-  Miss: { icon: "✕", color: "#ff6b5f" },
-  Blunder: { icon: "??", color: "#ef4444" },
+  Brilliant: { type: "brilliant", color: "#1ba39c" },
+  Great: { type: "great", color: "#5c8bbf" },
+  Book: { type: "book", color: "#a88764" },
+  Best: { type: "best", color: "#81b64c" },
+  Excellent: { type: "excellent", color: "#81b64c" },
+  Good: { type: "good", color: "#95b776" },
+  Inaccuracy: { type: "inaccuracy", color: "#f7c045" },
+  Mistake: { type: "mistake", color: "#ffa459" },
+  Miss: { type: "miss", color: "#ff7769" },
+  Blunder: { type: "blunder", color: "#fa412d" },
+};
+
+const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
+
+const QualityIcon = ({ quality, size = 34 }) => {
+  const qualityStyle = getQualityStyle(quality);
+  if (!qualityStyle) return null;
+
+  const renderIcon = () => {
+    switch (qualityStyle.type) {
+      case "brilliant":
+        return (
+          <>
+            <rect x="20" y="14" width="6" height="20" rx="1.5" fill="white" />
+            <circle cx="23" cy="42" r="3.2" fill="white" />
+            <rect x="32" y="14" width="6" height="20" rx="1.5" fill="white" />
+            <circle cx="35" cy="42" r="3.2" fill="white" />
+          </>
+        );
+
+      case "great":
+        return (
+          <>
+            <rect x="26" y="14" width="6" height="20" rx="1.5" fill="white" />
+            <circle cx="29" cy="42" r="3.4" fill="white" />
+          </>
+        );
+
+      case "book":
+        return (
+          <>
+            <path
+              d="M10 16 C18 13 24 14 29 18 V44 C24 40 18 39 10 42 Z"
+              fill="white"
+            />
+            <path
+              d="M48 16 C40 13 34 14 29 18 V44 C34 40 40 39 48 42 Z"
+              fill="white"
+            />
+            <path d="M29 18 V44" stroke={qualityStyle.color} strokeWidth="1.5" />
+          </>
+        );
+
+      case "best":
+        return (
+          <path
+            d="M29 11 L34.6 22.4 L47 24.2 L38 33 L40.2 45.4 L29 39.6 L17.8 45.4 L20 33 L11 24.2 L23.4 22.4 Z"
+            fill="white"
+          />
+        );
+
+      case "excellent":
+        return (
+          <path
+            d="M14 28 H22 V47 H17 C15.3 47 14 45.7 14 44 Z
+               M24 28 L31 13 C32 11 35.5 11 36.5 13.5 C37 15 36.6 17 36 19 L34.5 25 H45
+               C47.2 25 48.8 27 48.4 29.2 L45.6 43 C45.1 45.4 43 47 40.6 47 H24 Z"
+            fill="white"
+          />
+        );
+
+      case "good":
+        return (
+          <path
+            d="M13 30 L24 41 L46 18"
+            fill="none"
+            stroke="white"
+            strokeWidth="6.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        );
+
+      case "inaccuracy":
+        return (
+          <>
+            <path
+              d="M16 22 C17 14 30 13 31 21 C31.6 26 25 27 24.5 33"
+              fill="none"
+              stroke="white"
+              strokeWidth="4"
+              strokeLinecap="round"
+            />
+            <circle cx="24.5" cy="41" r="3.2" fill="white" />
+            <rect x="35" y="14" width="5.5" height="20" rx="1.4" fill="white" />
+            <circle cx="37.8" cy="41" r="3.2" fill="white" />
+          </>
+        );
+
+      case "mistake":
+        return (
+          <>
+            <path
+              d="M18 21 C19.5 12 38 12 39 22 C39.8 29 30 30 29.5 37"
+              fill="none"
+              stroke="white"
+              strokeWidth="5.5"
+              strokeLinecap="round"
+            />
+            <circle cx="29.5" cy="45" r="3.8" fill="white" />
+          </>
+        );
+
+      case "miss":
+        return (
+          <>
+            <path d="M17 17 L41 41" stroke="white" strokeWidth="7" strokeLinecap="round" />
+            <path d="M41 17 L17 41" stroke="white" strokeWidth="7" strokeLinecap="round" />
+          </>
+        );
+
+      case "blunder":
+        return (
+          <>
+            <path
+              d="M10 21 C11.5 12 26 12 27 22 C27.8 28 20 29 19.5 34"
+              fill="none"
+              stroke="white"
+              strokeWidth="4"
+              strokeLinecap="round"
+            />
+            <circle cx="19.5" cy="41" r="3" fill="white" />
+            <path
+              d="M32 21 C33.5 12 48 12 49 22 C49.8 28 42 29 41.5 34"
+              fill="none"
+              stroke="white"
+              strokeWidth="4"
+              strokeLinecap="round"
+            />
+            <circle cx="41.5" cy="41" r="3" fill="white" />
+          </>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <span
+      title={quality}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: "50%",
+        backgroundColor: qualityStyle.color,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow:
+          "inset 0 -2px 3px rgba(0,0,0,0.25), inset 0 2px 3px rgba(255,255,255,0.18), 0 2px 5px rgba(0,0,0,0.35)",
+        boxSizing: "border-box",
+        overflow: "hidden",
+      }}
+    >
+      <svg
+        width={size * 0.78}
+        height={size * 0.78}
+        viewBox="0 0 58 58"
+        aria-hidden="true"
+      >
+        {renderIcon()}
+      </svg>
+    </span>
+  );
 };
 
 function App() {
@@ -393,10 +558,6 @@ function App() {
     });
   };
 
-  const getQualityStyle = (quality) => {
-    return QUALITY_STYLES[quality] || null;
-  };
-
   const getCurrentMoveIconOverlay = () => {
     if (currentMove === 0 || !moveQuality || moveQuality === "Checking...") {
       return null;
@@ -412,9 +573,6 @@ function App() {
 
     const left = file * 12.5 + 8.8;
     const top = (8 - rank) * 12.5 + 1.4;
-    const qualityStyle = getQualityStyle(moveQuality);
-
-    if (!qualityStyle) return null;
 
     return (
       <div
@@ -422,23 +580,11 @@ function App() {
           position: "absolute",
           left: `${left}%`,
           top: `${top}%`,
-          width: "34px",
-          height: "34px",
-          borderRadius: "50%",
-          backgroundColor: qualityStyle.color,
-          color: "white",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontWeight: "bold",
-          fontSize: qualityStyle.icon.length > 1 ? "13px" : "20px",
-          border: "2px solid white",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
           zIndex: 5,
           pointerEvents: "none",
         }}
       >
-        {qualityStyle.icon}
+        <QualityIcon quality={moveQuality} size={34} />
       </div>
     );
   };
@@ -762,7 +908,6 @@ function App() {
 
         {moveHistory.map((move, index) => {
           const review = moveReviews[index];
-          const qualityStyle = review ? getQualityStyle(review.quality) : null;
 
           return (
             <span
@@ -781,26 +926,7 @@ function App() {
             >
               {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ""}
 
-              {qualityStyle && (
-                <span
-                  title={review.quality}
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    borderRadius: "50%",
-                    backgroundColor: qualityStyle.color,
-                    color: "white",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: qualityStyle.icon.length > 1 ? "9px" : "12px",
-                    fontWeight: "bold",
-                    lineHeight: 1,
-                  }}
-                >
-                  {qualityStyle.icon}
-                </span>
-              )}
+              {review && <QualityIcon quality={review.quality} size={18} />}
 
               {move}
             </span>
