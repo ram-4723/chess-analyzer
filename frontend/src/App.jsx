@@ -5,6 +5,28 @@ import { Chess } from "chess.js";
 const START_FEN = new Chess().fen();
 const STOCKFISH_PATH = "/stockfish/stockfish-nnue-16-single.js";
 
+const PIECE_VALUES = {
+  p: 100,
+  n: 300,
+  b: 300,
+  r: 500,
+  q: 900,
+  k: 0,
+};
+
+const QUALITY_STYLES = {
+  Brilliant: { icon: "!!", color: "#2dd4bf" },
+  Great: { icon: "!", color: "#8ab6e6" },
+  Book: { icon: "📖", color: "#d8a46f" },
+  Best: { icon: "★", color: "#8cc84b" },
+  Excellent: { icon: "👍", color: "#8cc84b" },
+  Good: { icon: "✓", color: "#9ccc65" },
+  Inaccuracy: { icon: "?!", color: "#facc15" },
+  Mistake: { icon: "?", color: "#fb923c" },
+  Miss: { icon: "✕", color: "#ff6b5f" },
+  Blunder: { icon: "??", color: "#ef4444" },
+};
+
 function App() {
   const [username, setUsername] = useState("");
   const [games, setGames] = useState([]);
@@ -23,6 +45,7 @@ function App() {
 
   const [moveQuality, setMoveQuality] = useState(null);
   const [evalLoss, setEvalLoss] = useState(null);
+  const [moveReviews, setMoveReviews] = useState({});
 
   const stockfishRef = useRef(null);
   const fenRef = useRef(START_FEN);
@@ -56,6 +79,7 @@ function App() {
       setFenHistory([START_FEN]);
       setMoveHistory([]);
       setUciMoveHistory([]);
+      setMoveReviews({});
       setCurrentMove(0);
       resetAnalysis();
     } catch (error) {
@@ -85,6 +109,7 @@ function App() {
 
       setMoveHistory(sans);
       setUciMoveHistory(uciMoves);
+      setMoveReviews({});
       setFenHistory(fens);
       setCurrentMove(0);
       resetAnalysis();
@@ -111,7 +136,6 @@ function App() {
 
   const getCurrentGameMove = () => {
     if (currentMove === 0) return "Start position";
-
     return moveHistory[currentMove - 1] || "-";
   };
 
@@ -144,7 +168,6 @@ function App() {
     try {
       const chess = new Chess(fen);
       const san = convertUciMoveToSan(chess, uciMove);
-
       return `${san} (${uciMove})`;
     } catch {
       return uciMove;
@@ -178,10 +201,117 @@ function App() {
 
   const classifyEvalLoss = (loss) => {
     if (loss <= 15) return "Best";
-    if (loss <= 30) return "Good";
-    if (loss <= 80) return "Inaccuracy";
-    if (loss <= 150) return "Mistake";
+    if (loss <= 30) return "Excellent";
+    if (loss <= 60) return "Good";
+    if (loss <= 120) return "Inaccuracy";
+    if (loss <= 250) return "Mistake";
     return "Blunder";
+  };
+
+  const getMaterialBalance = (fenToCheck) => {
+    const chess = new Chess(fenToCheck);
+    const board = chess.board();
+
+    let whiteMaterial = 0;
+    let blackMaterial = 0;
+
+    for (const row of board) {
+      for (const piece of row) {
+        if (!piece) continue;
+
+        const value = PIECE_VALUES[piece.type] || 0;
+
+        if (piece.color === "w") {
+          whiteMaterial += value;
+        } else {
+          blackMaterial += value;
+        }
+      }
+    }
+
+    return whiteMaterial - blackMaterial;
+  };
+
+  const isMaterialSacrifice = (previousFen, playedMove) => {
+    try {
+      const chess = new Chess(previousFen);
+      const player = chess.turn();
+      const beforeBalance = getMaterialBalance(previousFen);
+
+      const move = chess.move({
+        from: playedMove.slice(0, 2),
+        to: playedMove.slice(2, 4),
+        promotion: playedMove[4] || "q",
+      });
+
+      if (!move) return false;
+
+      const afterBalance = getMaterialBalance(chess.fen());
+
+      const beforePlayerMaterial =
+        player === "w" ? beforeBalance : -beforeBalance;
+
+      const afterPlayerMaterial =
+        player === "w" ? afterBalance : -afterBalance;
+
+      const immediateMaterialLoss = beforePlayerMaterial - afterPlayerMaterial;
+
+      const movedPiece = chess.get(move.to);
+      const movedPieceValue = movedPiece ? PIECE_VALUES[movedPiece.type] || 0 : 0;
+
+      const opponentCanCaptureMovedPiece = chess
+        .moves({ verbose: true })
+        .some((reply) => reply.to === move.to && reply.captured);
+
+      return (
+        immediateMaterialLoss >= 100 ||
+        (opponentCanCaptureMovedPiece && movedPieceValue >= 300)
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const isPositionSafeForPlayer = (afterWhiteEval, player) => {
+    if (player === "w") return afterWhiteEval > -100;
+    return afterWhiteEval < 100;
+  };
+
+  const isBrilliantMove = ({
+    playedBestMove,
+    quality,
+    evalLoss,
+    previousFen,
+    playedMove,
+    afterWhiteEval,
+  }) => {
+    const player = previousFen.split(" ")[1];
+
+    const bestOrExcellent =
+      playedBestMove || quality === "Best" || quality === "Excellent";
+
+    const tinyEvalLoss = evalLoss <= 20;
+    const sacrifice = isMaterialSacrifice(previousFen, playedMove);
+    const safePosition = isPositionSafeForPlayer(afterWhiteEval, player);
+
+    return bestOrExcellent && tinyEvalLoss && sacrifice && safePosition;
+  };
+
+  const isGreatMove = ({
+    brilliant,
+    playedBestMove,
+    beforeWhiteEval,
+    afterWhiteEval,
+    player,
+  }) => {
+    if (brilliant || !playedBestMove) return false;
+
+    const improvement =
+      player === "w"
+        ? afterWhiteEval - beforeWhiteEval
+        : beforeWhiteEval - afterWhiteEval;
+
+    return improvement >= 70;
   };
 
   const analyzeFenOnce = (fenToAnalyze, depth) => {
@@ -237,10 +367,7 @@ function App() {
             };
           }
 
-          if (pvMatch) {
-            latestBestMove = pvMatch[1];
-          }
-
+          if (pvMatch) latestBestMove = pvMatch[1];
           return;
         }
 
@@ -264,6 +391,56 @@ function App() {
 
       worker.postMessage("uci");
     });
+  };
+
+  const getQualityStyle = (quality) => {
+    return QUALITY_STYLES[quality] || null;
+  };
+
+  const getCurrentMoveIconOverlay = () => {
+    if (currentMove === 0 || !moveQuality || moveQuality === "Checking...") {
+      return null;
+    }
+
+    const playedMove = uciMoveHistory[currentMove - 1];
+
+    if (!playedMove) return null;
+
+    const square = playedMove.slice(2, 4);
+    const file = square.charCodeAt(0) - "a".charCodeAt(0);
+    const rank = Number(square[1]);
+
+    const left = file * 12.5 + 8.8;
+    const top = (8 - rank) * 12.5 + 1.4;
+    const qualityStyle = getQualityStyle(moveQuality);
+
+    if (!qualityStyle) return null;
+
+    return (
+      <div
+        style={{
+          position: "absolute",
+          left: `${left}%`,
+          top: `${top}%`,
+          width: "34px",
+          height: "34px",
+          borderRadius: "50%",
+          backgroundColor: qualityStyle.color,
+          color: "white",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontWeight: "bold",
+          fontSize: qualityStyle.icon.length > 1 ? "13px" : "20px",
+          border: "2px solid white",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.35)",
+          zIndex: 5,
+          pointerEvents: "none",
+        }}
+      >
+        {qualityStyle.icon}
+      </div>
+    );
   };
 
   useEffect(() => {
@@ -290,9 +467,7 @@ function App() {
         const mateMatch = line.match(/score mate (-?\d+)/);
         const pvMatch = line.match(/ pv (.+)/);
 
-        if (depthMatch) {
-          setEngineDepth(Number(depthMatch[1]));
-        }
+        if (depthMatch) setEngineDepth(Number(depthMatch[1]));
 
         const currentFen = fenRef.current;
         const sideToMove = currentFen.split(" ")[1];
@@ -325,9 +500,7 @@ function App() {
       if (line.startsWith("bestmove")) {
         const move = line.split(" ")[1];
 
-        if (move) {
-          setBestMove(move);
-        }
+        if (move) setBestMove(move);
 
         setEngineStatus("Complete");
       }
@@ -364,9 +537,18 @@ function App() {
         return;
       }
 
-      const previousFen = fenHistory[currentMove - 1];
+      const reviewIndex = currentMove - 1;
+      const cachedReview = moveReviews[reviewIndex];
+
+      if (cachedReview) {
+        setMoveQuality(cachedReview.quality);
+        setEvalLoss(cachedReview.evalLoss);
+        return;
+      }
+
+      const previousFen = fenHistory[reviewIndex];
       const currentFen = fenHistory[currentMove];
-      const playedMove = uciMoveHistory[currentMove - 1];
+      const playedMove = uciMoveHistory[reviewIndex];
 
       if (!previousFen || !currentFen || !playedMove) return;
 
@@ -380,14 +562,14 @@ function App() {
         const after = await analyzeFenOnce(currentFen, depth);
 
         if (!before.score || !after.score) {
-          setMoveQuality("Unknown");
+          setMoveQuality(null);
           return;
         }
 
         const beforeWhite = scoreToWhiteCentipawns(before.score, previousFen);
         const afterWhite = scoreToWhiteCentipawns(after.score, currentFen);
-
         const playerToMove = previousFen.split(" ")[1];
+
         const loss =
           playerToMove === "w"
             ? beforeWhite - afterWhite
@@ -395,22 +577,51 @@ function App() {
 
         const normalizedLoss = Math.max(0, loss);
         const playedBestMove = before.bestMove === playedMove;
+        const baseQuality = playedBestMove
+          ? "Best"
+          : classifyEvalLoss(normalizedLoss);
+
+        const brilliant = isBrilliantMove({
+          playedBestMove,
+          quality: baseQuality,
+          evalLoss: normalizedLoss,
+          previousFen,
+          playedMove,
+          afterWhiteEval: afterWhite,
+        });
+
+        const great = isGreatMove({
+          brilliant,
+          playedBestMove,
+          beforeWhiteEval: beforeWhite,
+          afterWhiteEval: afterWhite,
+          player: playerToMove,
+        });
+
+        const finalQuality = brilliant
+          ? "Brilliant"
+          : great
+          ? "Great"
+          : baseQuality;
 
         setEvalLoss(normalizedLoss);
+        setMoveQuality(finalQuality);
 
-        if (playedBestMove) {
-          setMoveQuality("Best");
-        } else {
-          setMoveQuality(classifyEvalLoss(normalizedLoss));
-        }
+        setMoveReviews((reviews) => ({
+          ...reviews,
+          [reviewIndex]: {
+            quality: finalQuality,
+            evalLoss: normalizedLoss,
+          },
+        }));
       } catch (error) {
         console.log(error);
-        setMoveQuality("Unknown");
+        setMoveQuality(null);
       }
     };
 
     analyzeMoveQuality();
-  }, [currentMove, fenHistory, uciMoveHistory, analysisDepth]);
+  }, [currentMove, fenHistory, uciMoveHistory, analysisDepth, moveReviews]);
 
   const chessboardOptions = useMemo(
     () => ({
@@ -446,9 +657,11 @@ function App() {
           marginTop: "30px",
           width: "500px",
           height: "500px",
+          position: "relative",
         }}
       >
         <Chessboard options={chessboardOptions} />
+        {getCurrentMoveIconOverlay()}
       </div>
 
       <div
@@ -471,7 +684,10 @@ function App() {
             <strong>Analysis Depth:</strong>{" "}
             <select
               value={analysisDepth}
-              onChange={(e) => setAnalysisDepth(Number(e.target.value))}
+              onChange={(e) => {
+                setMoveReviews({});
+                setAnalysisDepth(Number(e.target.value));
+              }}
             >
               <option value={8}>Fast - 8</option>
               <option value={12}>Normal - 12</option>
@@ -544,21 +760,52 @@ function App() {
       >
         <h3>Moves</h3>
 
-        {moveHistory.map((move, index) => (
-          <span
-            key={index}
-            onClick={() => jumpToMove(index + 1)}
-            style={{
-              marginRight: "10px",
-              cursor: "pointer",
-              color: currentMove === index + 1 ? "red" : "black",
-              fontWeight: currentMove === index + 1 ? "bold" : "normal",
-            }}
-          >
-            {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ""}
-            {move}
-          </span>
-        ))}
+        {moveHistory.map((move, index) => {
+          const review = moveReviews[index];
+          const qualityStyle = review ? getQualityStyle(review.quality) : null;
+
+          return (
+            <span
+              key={index}
+              onClick={() => jumpToMove(index + 1)}
+              style={{
+                marginRight: "12px",
+                cursor: "pointer",
+                color: currentMove === index + 1 ? "red" : "black",
+                fontWeight: currentMove === index + 1 ? "bold" : "normal",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                marginBottom: "8px",
+              }}
+            >
+              {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ""}
+
+              {qualityStyle && (
+                <span
+                  title={review.quality}
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "50%",
+                    backgroundColor: qualityStyle.color,
+                    color: "white",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: qualityStyle.icon.length > 1 ? "9px" : "12px",
+                    fontWeight: "bold",
+                    lineHeight: 1,
+                  }}
+                >
+                  {qualityStyle.icon}
+                </span>
+              )}
+
+              {move}
+            </span>
+          );
+        })}
       </div>
 
       <div style={{ marginTop: "30px" }}>
