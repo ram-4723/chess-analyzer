@@ -1,73 +1,72 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
 
 function App() {
   const [username, setUsername] = useState("");
   const [games, setGames] = useState([]);
-
-  const [moves, setMoves] = useState([]);
+  const [fenHistory, setFenHistory] = useState([new Chess().fen()]);
   const [currentMove, setCurrentMove] = useState(0);
 
-  const chess = new Chess();
+  const fen = fenHistory[currentMove];
 
-  // Fetch games
   const fetchGames = async () => {
+    if (!username.trim()) return;
+
     try {
       const response = await fetch(
-        `http://localhost:5000/games/${username}`
+        `http://localhost:5000/games/${username.trim()}`
       );
 
       const data = await response.json();
 
       setGames(data);
-
+      setFenHistory([new Chess().fen()]);
+      setCurrentMove(0);
     } catch (error) {
       console.log(error);
     }
   };
 
-  // Load selected game
   const loadGame = (pgn) => {
     try {
-      const game = new Chess();
+      const loadedGame = new Chess();
 
-      const cleanPgn = pgn
-        .split("\n")
-        .filter(line => !line.startsWith("["))
-        .join(" ");
+      loadedGame.loadPgn(pgn);
 
-      game.loadPgn(cleanPgn);
+      const replayGame = new Chess();
+      const fens = [replayGame.fen()];
 
-      const history = game.history();
+      for (const move of loadedGame.history()) {
+        replayGame.move(move);
+        fens.push(replayGame.fen());
+      }
 
-      setMoves(history);
-
+      setFenHistory(fens);
       setCurrentMove(0);
-
     } catch (error) {
       console.log(error);
     }
   };
 
-  // Build board position
-  for (let i = 0; i < currentMove; i++) {
-    chess.move(moves[i]);
-  }
-
-  // Next move
   const nextMove = () => {
-    if (currentMove < moves.length) {
-      setCurrentMove(currentMove + 1);
-    }
+    setCurrentMove((move) => Math.min(move + 1, fenHistory.length - 1));
   };
 
-  // Previous move
   const previousMove = () => {
-    if (currentMove > 0) {
-      setCurrentMove(currentMove - 1);
-    }
+    setCurrentMove((move) => Math.max(move - 1, 0));
   };
+
+  const chessboardOptions = useMemo(
+    () => ({
+      position: fen,
+      boardStyle: {
+        width: "500px",
+        height: "500px",
+      },
+    }),
+    [fen]
+  );
 
   return (
     <div style={{ padding: "30px", fontFamily: "Arial" }}>
@@ -85,30 +84,34 @@ function App() {
         }}
       />
 
-      <button onClick={fetchGames}>
-        Get Games
-      </button>
+      <button onClick={fetchGames}>Get Games</button>
 
       <div
         style={{
           marginTop: "30px",
           width: "500px",
+          height: "500px",
         }}
       >
-        <Chessboard position={chess.fen()} />
+        <Chessboard options={chessboardOptions} />
       </div>
 
       <div style={{ marginTop: "20px" }}>
-        <button onClick={previousMove}>
+        <button onClick={previousMove} disabled={currentMove === 0}>
           Previous
         </button>
 
         <button
           onClick={nextMove}
+          disabled={currentMove === fenHistory.length - 1}
           style={{ marginLeft: "10px" }}
         >
           Next
         </button>
+
+        <span style={{ marginLeft: "12px" }}>
+          Move {currentMove} / {fenHistory.length - 1}
+        </span>
       </div>
 
       <div style={{ marginTop: "30px" }}>
@@ -127,21 +130,10 @@ function App() {
               }
             }}
           >
-            <p>
-              White: {game.white.username}
-            </p>
-
-            <p>
-              Black: {game.black.username}
-            </p>
-
-            <p>
-              Time Class: {game.time_class}
-            </p>
-
-            <p>
-              Click to load game
-            </p>
+            <p>White: {game.white.username}</p>
+            <p>Black: {game.black.username}</p>
+            <p>Time Class: {game.time_class}</p>
+            <p>Click to load game</p>
           </div>
         ))}
       </div>
