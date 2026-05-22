@@ -5,8 +5,13 @@ import { Chess } from "chess.js";
 function App() {
   const [username, setUsername] = useState("");
   const [games, setGames] = useState([]);
-  const [fen, setFen] = useState(null);
 
+  const [moves, setMoves] = useState([]);
+  const [currentMove, setCurrentMove] = useState(0);
+
+  const chess = new Chess();
+
+  // Fetch games
   const fetchGames = async () => {
     try {
       const response = await fetch(
@@ -22,29 +27,45 @@ function App() {
     }
   };
 
+  // Load selected game
   const loadGame = (pgn) => {
     try {
-      const chess = new Chess();
+      const game = new Chess();
 
-      // Clean PGN
       const cleanPgn = pgn
         .split("\n")
         .filter(line => !line.startsWith("["))
         .join(" ");
 
-      // Load moves
-      chess.loadPgn(cleanPgn);
+      game.loadPgn(cleanPgn);
 
-      // Get final position
-      const finalFen = chess.fen();
+      const history = game.history();
 
-      console.log(finalFen);
+      setMoves(history);
 
-      // Update board
-      setFen(finalFen);
+      setCurrentMove(0);
 
     } catch (error) {
       console.log(error);
+    }
+  };
+
+  // Build board position
+  for (let i = 0; i < currentMove; i++) {
+    chess.move(moves[i]);
+  }
+
+  // Next move
+  const nextMove = () => {
+    if (currentMove < moves.length) {
+      setCurrentMove(currentMove + 1);
+    }
+  };
+
+  // Previous move
+  const previousMove = () => {
+    if (currentMove > 0) {
+      setCurrentMove(currentMove - 1);
     }
   };
 
@@ -71,13 +92,23 @@ function App() {
       <div
         style={{
           marginTop: "30px",
-          width: "500px"
+          width: "500px",
         }}
       >
-        <Chessboard
-          id="BasicBoard"
-          position={fen || "start"}
-        />
+        <Chessboard position={chess.fen()} />
+      </div>
+
+      <div style={{ marginTop: "20px" }}>
+        <button onClick={previousMove}>
+          Previous
+        </button>
+
+        <button
+          onClick={nextMove}
+          style={{ marginLeft: "10px" }}
+        >
+          Next
+        </button>
       </div>
 
       <div style={{ marginTop: "30px" }}>
