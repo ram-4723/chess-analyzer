@@ -10,17 +10,37 @@ function App() {
   const [games, setGames] = useState([]);
   const [fenHistory, setFenHistory] = useState([START_FEN]);
   const [moveHistory, setMoveHistory] = useState([]);
+  const [uciMoveHistory, setUciMoveHistory] = useState([]);
   const [currentMove, setCurrentMove] = useState(0);
 
   const [engineReady, setEngineReady] = useState(false);
   const [engineStatus, setEngineStatus] = useState("Loading Stockfish...");
   const [evaluation, setEvaluation] = useState(null);
   const [bestMove, setBestMove] = useState(null);
+  const [bestLine, setBestLine] = useState([]);
   const [engineDepth, setEngineDepth] = useState(null);
+  const [analysisDepth, setAnalysisDepth] = useState(12);
+
+  const [moveQuality, setMoveQuality] = useState(null);
+  const [evalLoss, setEvalLoss] = useState(null);
 
   const stockfishRef = useRef(null);
+  const fenRef = useRef(START_FEN);
 
   const fen = fenHistory[currentMove] || START_FEN;
+
+  useEffect(() => {
+    fenRef.current = fen;
+  }, [fen]);
+
+  const resetAnalysis = () => {
+    setEvaluation(null);
+    setBestMove(null);
+    setBestLine([]);
+    setEngineDepth(null);
+    setMoveQuality(null);
+    setEvalLoss(null);
+  };
 
   const fetchGames = async () => {
     if (!username.trim()) return;
@@ -35,10 +55,9 @@ function App() {
       setGames(data);
       setFenHistory([START_FEN]);
       setMoveHistory([]);
+      setUciMoveHistory([]);
       setCurrentMove(0);
-      setEvaluation(null);
-      setBestMove(null);
-      setEngineDepth(null);
+      resetAnalysis();
     } catch (error) {
       console.log(error);
     }
@@ -49,21 +68,26 @@ function App() {
       const loadedGame = new Chess();
       loadedGame.loadPgn(pgn);
 
-      const moves = loadedGame.history();
+      const verboseMoves = loadedGame.history({ verbose: true });
       const replayGame = new Chess();
+
+      const sans = [];
+      const uciMoves = [];
       const fens = [replayGame.fen()];
 
-      for (const move of moves) {
-        replayGame.move(move);
+      for (const move of verboseMoves) {
+        sans.push(move.san);
+        uciMoves.push(`${move.from}${move.to}${move.promotion || ""}`);
+
+        replayGame.move(move.san);
         fens.push(replayGame.fen());
       }
 
-      setMoveHistory(moves);
+      setMoveHistory(sans);
+      setUciMoveHistory(uciMoves);
       setFenHistory(fens);
       setCurrentMove(0);
-      setEvaluation(null);
-      setBestMove(null);
-      setEngineDepth(null);
+      resetAnalysis();
     } catch (error) {
       console.log(error);
     }
@@ -81,6 +105,16 @@ function App() {
     setCurrentMove(Math.max(0, Math.min(moveIndex, fenHistory.length - 1)));
   };
 
+  const getSideToMove = () => {
+    return fen.split(" ")[1] === "w" ? "White" : "Black";
+  };
+
+  const getCurrentGameMove = () => {
+    if (currentMove === 0) return "Start position";
+
+    return moveHistory[currentMove - 1] || "-";
+  };
+
   const formatEvaluation = (score) => {
     if (!score) return "Analyzing...";
 
@@ -91,8 +125,17 @@ function App() {
     }
 
     const pawns = score.value / 100;
-
     return pawns > 0 ? `+${pawns.toFixed(2)}` : pawns.toFixed(2);
+  };
+
+  const convertUciMoveToSan = (chess, uciMove) => {
+    const move = chess.move({
+      from: uciMove.slice(0, 2),
+      to: uciMove.slice(2, 4),
+      promotion: uciMove[4] || "q",
+    });
+
+    return move ? move.san : uciMove;
   };
 
   const getBestMoveSan = (uciMove) => {
@@ -100,17 +143,127 @@ function App() {
 
     try {
       const chess = new Chess(fen);
+      const san = convertUciMoveToSan(chess, uciMove);
 
-      const move = chess.move({
-        from: uciMove.slice(0, 2),
-        to: uciMove.slice(2, 4),
-        promotion: uciMove[4] || "q",
-      });
-
-      return move ? `${move.san} (${uciMove})` : uciMove;
+      return `${san} (${uciMove})`;
     } catch {
       return uciMove;
     }
+  };
+
+  const getBestLineSan = () => {
+    if (!bestLine.length) return "Analyzing...";
+
+    try {
+      const chess = new Chess(fen);
+
+      return bestLine
+        .map((uciMove) => convertUciMoveToSan(chess, uciMove))
+        .join(" ");
+    } catch {
+      return bestLine.join(" ");
+    }
+  };
+
+  const scoreToWhiteCentipawns = (score, fenToScore) => {
+    const sideToMove = fenToScore.split(" ")[1];
+
+    if (score.type === "mate") {
+      const mateValue = score.value > 0 ? 100000 : -100000;
+      return sideToMove === "b" ? -mateValue : mateValue;
+    }
+
+    return sideToMove === "b" ? -score.value : score.value;
+  };
+
+  const classifyEvalLoss = (loss) => {
+    if (loss <= 15) return "Best";
+    if (loss <= 30) return "Good";
+    if (loss <= 80) return "Inaccuracy";
+    if (loss <= 150) return "Mistake";
+    return "Blunder";
+  };
+
+  const analyzeFenOnce = (fenToAnalyze, depth) => {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(STOCKFISH_PATH);
+
+      let latestScore = null;
+      let latestBestMove = null;
+      let finished = false;
+
+      const finish = (result) => {
+        if (finished) return;
+        finished = true;
+        worker.terminate();
+        resolve(result);
+      };
+
+      const timeout = setTimeout(() => {
+        if (!finished) {
+          worker.terminate();
+          reject(new Error("Stockfish analysis timed out"));
+        }
+      }, 30000);
+
+      worker.onmessage = (event) => {
+        const line = String(event.data);
+
+        if (line === "uciok") {
+          worker.postMessage("isready");
+          return;
+        }
+
+        if (line === "readyok") {
+          worker.postMessage(`position fen ${fenToAnalyze}`);
+          worker.postMessage(`go depth ${depth}`);
+          return;
+        }
+
+        if (line.startsWith("info depth")) {
+          const cpMatch = line.match(/score cp (-?\d+)/);
+          const mateMatch = line.match(/score mate (-?\d+)/);
+          const pvMatch = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
+
+          if (mateMatch) {
+            latestScore = {
+              type: "mate",
+              value: Number(mateMatch[1]),
+            };
+          } else if (cpMatch) {
+            latestScore = {
+              type: "cp",
+              value: Number(cpMatch[1]),
+            };
+          }
+
+          if (pvMatch) {
+            latestBestMove = pvMatch[1];
+          }
+
+          return;
+        }
+
+        if (line.startsWith("bestmove")) {
+          clearTimeout(timeout);
+
+          const move = line.split(" ")[1];
+
+          finish({
+            score: latestScore,
+            bestMove: move || latestBestMove,
+          });
+        }
+      };
+
+      worker.onerror = (error) => {
+        clearTimeout(timeout);
+        worker.terminate();
+        reject(error);
+      };
+
+      worker.postMessage("uci");
+    });
   };
 
   useEffect(() => {
@@ -135,13 +288,14 @@ function App() {
         const depthMatch = line.match(/depth (\d+)/);
         const cpMatch = line.match(/score cp (-?\d+)/);
         const mateMatch = line.match(/score mate (-?\d+)/);
-        const pvMatch = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
+        const pvMatch = line.match(/ pv (.+)/);
 
         if (depthMatch) {
           setEngineDepth(Number(depthMatch[1]));
         }
 
-        const sideToMove = fen.split(" ")[1];
+        const currentFen = fenRef.current;
+        const sideToMove = currentFen.split(" ")[1];
 
         if (mateMatch) {
           const mateScore = Number(mateMatch[1]);
@@ -160,7 +314,9 @@ function App() {
         }
 
         if (pvMatch) {
-          setBestMove(pvMatch[1]);
+          const lineMoves = pvMatch[1].trim().split(" ");
+          setBestLine(lineMoves);
+          setBestMove(lineMoves[0]);
         }
 
         return;
@@ -187,20 +343,74 @@ function App() {
     return () => {
       stockfish.terminate();
     };
-  }, [fen]);
+  }, []);
 
   useEffect(() => {
     if (!engineReady || !stockfishRef.current) return;
 
     setEngineStatus("Analyzing...");
-    setEvaluation(null);
-    setBestMove(null);
-    setEngineDepth(null);
+    resetAnalysis();
 
     stockfishRef.current.postMessage("stop");
     stockfishRef.current.postMessage(`position fen ${fen}`);
-    stockfishRef.current.postMessage("go depth 12");
-  }, [fen, engineReady]);
+    stockfishRef.current.postMessage(`go depth ${analysisDepth}`);
+  }, [fen, engineReady, analysisDepth]);
+
+  useEffect(() => {
+    const analyzeMoveQuality = async () => {
+      if (currentMove === 0) {
+        setMoveQuality(null);
+        setEvalLoss(null);
+        return;
+      }
+
+      const previousFen = fenHistory[currentMove - 1];
+      const currentFen = fenHistory[currentMove];
+      const playedMove = uciMoveHistory[currentMove - 1];
+
+      if (!previousFen || !currentFen || !playedMove) return;
+
+      try {
+        setMoveQuality("Checking...");
+        setEvalLoss(null);
+
+        const depth = Math.min(analysisDepth, 14);
+
+        const before = await analyzeFenOnce(previousFen, depth);
+        const after = await analyzeFenOnce(currentFen, depth);
+
+        if (!before.score || !after.score) {
+          setMoveQuality("Unknown");
+          return;
+        }
+
+        const beforeWhite = scoreToWhiteCentipawns(before.score, previousFen);
+        const afterWhite = scoreToWhiteCentipawns(after.score, currentFen);
+
+        const playerToMove = previousFen.split(" ")[1];
+        const loss =
+          playerToMove === "w"
+            ? beforeWhite - afterWhite
+            : afterWhite - beforeWhite;
+
+        const normalizedLoss = Math.max(0, loss);
+        const playedBestMove = before.bestMove === playedMove;
+
+        setEvalLoss(normalizedLoss);
+
+        if (playedBestMove) {
+          setMoveQuality("Best");
+        } else {
+          setMoveQuality(classifyEvalLoss(normalizedLoss));
+        }
+      } catch (error) {
+        console.log(error);
+        setMoveQuality("Unknown");
+      }
+    };
+
+    analyzeMoveQuality();
+  }, [currentMove, fenHistory, uciMoveHistory, analysisDepth]);
 
   const chessboardOptions = useMemo(
     () => ({
@@ -256,12 +466,49 @@ function App() {
           <strong>Status:</strong> {engineStatus}
         </p>
 
+        <div style={{ marginBottom: "12px" }}>
+          <label>
+            <strong>Analysis Depth:</strong>{" "}
+            <select
+              value={analysisDepth}
+              onChange={(e) => setAnalysisDepth(Number(e.target.value))}
+            >
+              <option value={8}>Fast - 8</option>
+              <option value={12}>Normal - 12</option>
+              <option value={16}>Deep - 16</option>
+              <option value={20}>Very Deep - 20</option>
+              <option value={30}>Maximum - 30</option>
+            </select>
+          </label>
+        </div>
+
+        <p>
+          <strong>Side to Move:</strong> {getSideToMove()}
+        </p>
+
         <p>
           <strong>Evaluation:</strong> {formatEvaluation(evaluation)}
         </p>
 
         <p>
-          <strong>Best Move:</strong> {getBestMoveSan(bestMove)}
+          <strong>Last Game Move:</strong> {getCurrentGameMove()}
+        </p>
+
+        <p>
+          <strong>Move Quality:</strong> {moveQuality || "-"}
+        </p>
+
+        <p>
+          <strong>Eval Loss:</strong>{" "}
+          {evalLoss === null ? "-" : (evalLoss / 100).toFixed(2)}
+        </p>
+
+        <p>
+          <strong>Best Move Now:</strong> {getBestMoveSan(bestMove)}
+        </p>
+
+        <p>
+          <strong>Best Line:</strong> {getBestLineSan()}
         </p>
 
         <p>
