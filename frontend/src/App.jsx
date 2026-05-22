@@ -16,8 +16,8 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/games/${username.trim()}`
-      );
+  `https://chess-analyzer-e2o0.onrender.com/games/${username.trim()}`
+);
 
       const data = await response.json();
 
