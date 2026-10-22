@@ -357,7 +357,12 @@ function App() {
     const sideToMove = fenToScore.split(" ")[1];
 
     if (score.type === "mate") {
-      const mateValue = score.value > 0 ? 100000 : -100000;
+      // Preserve mate distance so mate-in-2 is better than mate-in-8 (and
+      // losing sooner is worse). Stockfish reports mate distance in moves.
+      const mateDistance = Math.abs(score.value);
+      const mateMagnitude = Math.max(0, 100000 - mateDistance * 100);
+      const mateSign = score.value === 0 ? -1 : Math.sign(score.value);
+      const mateValue = mateSign * mateMagnitude;
       return sideToMove === "b" ? -mateValue : mateValue;
     }
 
@@ -365,44 +370,18 @@ function App() {
   };
 
   const classifyEvalLoss = (loss) => {
-    if (loss <= 15) return "Best";
-    if (loss <= 30) return "Excellent";
-    if (loss <= 60) return "Good";
-    if (loss <= 120) return "Inaccuracy";
-    if (loss <= 250) return "Mistake";
+    // These are project thresholds, not Chess.com's proprietary labels.
+    // Keep “Best” for the engine's actual top move; score loss grades the rest.
+    if (loss <= 15) return "Excellent";
+    if (loss <= 40) return "Good";
+    if (loss <= 90) return "Inaccuracy";
+    if (loss <= 200) return "Mistake";
     return "Blunder";
-  };
-
-  const getMaterialBalance = (fenToCheck) => {
-    const chess = new Chess(fenToCheck);
-    const board = chess.board();
-
-    let whiteMaterial = 0;
-    let blackMaterial = 0;
-
-    for (const row of board) {
-      for (const piece of row) {
-        if (!piece) continue;
-
-        const value = PIECE_VALUES[piece.type] || 0;
-
-        if (piece.color === "w") {
-          whiteMaterial += value;
-        } else {
-          blackMaterial += value;
-        }
-      }
-    }
-
-    return whiteMaterial - blackMaterial;
   };
 
   const isMaterialSacrifice = (previousFen, playedMove) => {
     try {
       const chess = new Chess(previousFen);
-      const player = chess.turn();
-      const beforeBalance = getMaterialBalance(previousFen);
-
       const move = chess.move({
         from: playedMove.slice(0, 2),
         to: playedMove.slice(2, 4),
@@ -410,80 +389,48 @@ function App() {
       });
 
       if (!move) return false;
-
-      const afterBalance = getMaterialBalance(chess.fen());
-
-      const beforePlayerMaterial =
-        player === "w" ? beforeBalance : -beforeBalance;
-
-      const afterPlayerMaterial =
-        player === "w" ? afterBalance : -afterBalance;
-
-      const immediateMaterialLoss = beforePlayerMaterial - afterPlayerMaterial;
-
       const movedPiece = chess.get(move.to);
       const movedPieceValue = movedPiece ? PIECE_VALUES[movedPiece.type] || 0 : 0;
+      if (movedPieceValue < 300) return false;
 
-      const opponentCanCaptureMovedPiece = chess
+      // Require a legal immediate capture of the offered piece. Merely moving
+      // a piece to a square controlled by a pinned piece is not a sacrifice.
+      return chess
         .moves({ verbose: true })
         .some((reply) => reply.to === move.to && reply.captured);
-
-      return (
-        immediateMaterialLoss >= 100 ||
-        (opponentCanCaptureMovedPiece && movedPieceValue >= 300)
-      );
     } catch {
       return false;
     }
   };
 
-  const isPositionSafeForPlayer = (afterWhiteEval, player) => {
-    if (player === "w") return afterWhiteEval > -100;
-    return afterWhiteEval < 100;
-  };
-
   const isBrilliantMove = ({
     playedBestMove,
-    quality,
     evalLoss,
+    secondBestLoss,
     previousFen,
     playedMove,
-    afterWhiteEval,
   }) => {
-    const player = previousFen.split(" ")[1];
-
-    const bestOrExcellent =
-      playedBestMove || quality === "Best" || quality === "Excellent";
-
-    const tinyEvalLoss = evalLoss <= 20;
+    // Require the engine's top move, a real offered piece, and a clear gap to
+    // the next choice. This makes the label rarer and less arbitrary.
     const sacrifice = isMaterialSacrifice(previousFen, playedMove);
-    const safePosition = isPositionSafeForPlayer(afterWhiteEval, player);
-
-    return bestOrExcellent && tinyEvalLoss && sacrifice && safePosition;
+    return playedBestMove && evalLoss <= 15 && secondBestLoss >= 100 && sacrifice;
   };
 
   const isGreatMove = ({
     brilliant,
     playedBestMove,
-    beforeWhiteEval,
-    afterWhiteEval,
-    player,
+    secondBestLoss,
   }) => {
-    if (brilliant || !playedBestMove) return false;
-
-    const improvement =
-      player === "w"
-        ? afterWhiteEval - beforeWhiteEval
-        : beforeWhiteEval - afterWhiteEval;
-
-    return improvement >= 70;
+    // “Great” here means the played top move was materially better than the
+    // next engine choice, without meeting the stricter sacrifice rule.
+    return !brilliant && playedBestMove && secondBestLoss >= 70;
   };
 
-  const analyzeFenOnce = (fenToAnalyze, depth) => {
+  const analyzeFenOnce = (fenToAnalyze, depth, forcedMove = null, multiPv = 1) => {
     return new Promise((resolve, reject) => {
       const worker = new Worker(STOCKFISH_PATH);
 
-      let latestScore = null;
+      const scoresByLine = {};
       let latestBestMove = null;
       let finished = false;
 
@@ -505,34 +452,47 @@ function App() {
         const line = String(event.data);
 
         if (line === "uciok") {
+          worker.postMessage(`setoption name MultiPV value ${multiPv}`);
           worker.postMessage("isready");
           return;
         }
 
         if (line === "readyok") {
           worker.postMessage(`position fen ${fenToAnalyze}`);
-          worker.postMessage(`go depth ${depth}`);
+          worker.postMessage(
+            forcedMove
+              ? `go depth ${depth} searchmoves ${forcedMove}`
+              : `go depth ${depth}`
+          );
           return;
         }
 
         if (line.startsWith("info depth")) {
+          const depthMatch = line.match(/\bdepth (\d+)/);
+          const multipvMatch = line.match(/\bmultipv (\d+)/);
+          const lineDepth = depthMatch ? Number(depthMatch[1]) : 0;
+          const lineNumber = multipvMatch ? Number(multipvMatch[1]) : 1;
           const cpMatch = line.match(/score cp (-?\d+)/);
           const mateMatch = line.match(/score mate (-?\d+)/);
           const pvMatch = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
 
+          let score = null;
           if (mateMatch) {
-            latestScore = {
+            score = {
               type: "mate",
               value: Number(mateMatch[1]),
             };
           } else if (cpMatch) {
-            latestScore = {
+            score = {
               type: "cp",
               value: Number(cpMatch[1]),
             };
           }
 
-          if (pvMatch) latestBestMove = pvMatch[1];
+          if (score && lineDepth >= (scoresByLine[lineNumber]?.depth || 0)) {
+            scoresByLine[lineNumber] = { depth: lineDepth, score };
+          }
+          if (lineNumber === 1 && pvMatch) latestBestMove = pvMatch[1];
           return;
         }
 
@@ -542,7 +502,19 @@ function App() {
           const move = line.split(" ")[1];
 
           finish({
-            score: latestScore,
+            score: scoresByLine[1]?.score || null,
+            alternatives: Object.fromEntries(
+              Object.entries(scoresByLine).map(([lineNumber, lineInfo]) => [
+                lineNumber,
+                lineInfo.score,
+              ])
+            ),
+            depths: Object.fromEntries(
+              Object.entries(scoresByLine).map(([lineNumber, lineInfo]) => [
+                lineNumber,
+                lineInfo.depth,
+              ])
+            ),
             bestMove: move || latestBestMove,
           });
         }
@@ -676,6 +648,7 @@ function App() {
   }, [fen, engineReady, analysisDepth]);
 
   useEffect(() => {
+    let cancelled = false;
     const analyzeMoveQuality = async () => {
       if (currentMove === 0) {
         setMoveQuality(null);
@@ -702,26 +675,50 @@ function App() {
         setMoveQuality("Checking...");
         setEvalLoss(null);
 
-        const depth = Math.min(analysisDepth, 14);
+        // Move reviews are capped to keep browser analysis responsive.
+        const depth = Math.min(analysisDepth, 16);
 
-        const before = await analyzeFenOnce(previousFen, depth);
-        const after = await analyzeFenOnce(currentFen, depth);
+        // MultiPV gives the engine's top two alternatives from one root
+        // search, so “Great/Brilliant” can be based on a real score gap.
+        const before = await analyzeFenOnce(previousFen, depth, null, 2);
+        if (cancelled) return;
+        // Force the played move from the same root position. Comparing two
+        // searches from that identical position is fairer than comparing
+        // separate positions with different sides to move and search trees.
+        const played = await analyzeFenOnce(previousFen, depth, playedMove);
+        if (cancelled) return;
 
-        if (!before.score || !after.score) {
+        if (!before.score || !played.score) {
           setMoveQuality(null);
           return;
         }
 
         const beforeWhite = scoreToWhiteCentipawns(before.score, previousFen);
-        const afterWhite = scoreToWhiteCentipawns(after.score, currentFen);
+        const playedWhite = scoreToWhiteCentipawns(played.score, previousFen);
         const playerToMove = previousFen.split(" ")[1];
+        const secondBestScore = before.depths?.[2] === before.depths?.[1]
+          ? before.alternatives?.[2]
+          : null;
+        const secondBestWhite = secondBestScore
+          ? scoreToWhiteCentipawns(secondBestScore, previousFen)
+          : null;
+        const secondBestLoss = secondBestWhite === null
+          ? 0
+          : Math.max(
+              0,
+              playerToMove === "w"
+                ? beforeWhite - secondBestWhite
+                : secondBestWhite - beforeWhite
+            );
 
-        const loss =
+        const rawLoss =
           playerToMove === "w"
-            ? beforeWhite - afterWhite
-            : afterWhite - beforeWhite;
+            ? beforeWhite - playedWhite
+            : playedWhite - beforeWhite;
 
-        const normalizedLoss = Math.max(0, loss);
+        // Small negative values are search noise or a horizon effect; do not
+        // award a better label than the engine's top move for them.
+        const normalizedLoss = Math.max(0, rawLoss);
         const playedBestMove = before.bestMove === playedMove;
         const baseQuality = playedBestMove
           ? "Best"
@@ -729,19 +726,16 @@ function App() {
 
         const brilliant = isBrilliantMove({
           playedBestMove,
-          quality: baseQuality,
           evalLoss: normalizedLoss,
+          secondBestLoss,
           previousFen,
           playedMove,
-          afterWhiteEval: afterWhite,
         });
 
         const great = isGreatMove({
           brilliant,
           playedBestMove,
-          beforeWhiteEval: beforeWhite,
-          afterWhiteEval: afterWhite,
-          player: playerToMove,
+          secondBestLoss,
         });
 
         const finalQuality = brilliant
@@ -761,12 +755,20 @@ function App() {
           },
         }));
       } catch (error) {
-        console.log(error);
-        setMoveQuality(null);
+        if (!cancelled) {
+          console.error("Move review failed:", error);
+          setMoveQuality(null);
+        }
       }
+
     };
 
     analyzeMoveQuality();
+    return () => {
+      // The async review checks this flag between engine searches so results
+      // for an old selected move cannot overwrite the newly selected move.
+      cancelled = true;
+    };
   }, [currentMove, fenHistory, uciMoveHistory, analysisDepth, moveReviews]);
 
   const chessboardOptions = useMemo(
