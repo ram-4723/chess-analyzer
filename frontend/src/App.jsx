@@ -241,6 +241,9 @@ const QualityIcon = ({ quality, size = 34 }) => {
 function App() {
   const [username, setUsername] = useState("");
   const [games, setGames] = useState([]);
+  const [gamesOpen, setGamesOpen] = useState(false);
+  const [gamesLoading, setGamesLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [fenHistory, setFenHistory] = useState([START_FEN]);
   const [moveHistory, setMoveHistory] = useState([]);
   const [uciMoveHistory, setUciMoveHistory] = useState([]);
@@ -264,11 +267,31 @@ function App() {
   const [retryMoveIndex, setRetryMoveIndex] = useState(null);
   const [retryFeedback, setRetryFeedback] = useState("");
   const reviewRunRef = useRef(0);
+  const searchRef = useRef(null);
 
   const stockfishRef = useRef(null);
   const fenRef = useRef(START_FEN);
 
   const fen = fenHistory[currentMove] || START_FEN;
+
+  useEffect(() => {
+    const closeSearch = (event) => {
+      if (event.key === "Escape") {
+        setGamesOpen(false);
+        return;
+      }
+      if (event.type === "pointerdown" && !searchRef.current?.contains(event.target)) {
+        setGamesOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeSearch);
+    document.addEventListener("keydown", closeSearch);
+    return () => {
+      document.removeEventListener("pointerdown", closeSearch);
+      document.removeEventListener("keydown", closeSearch);
+    };
+  }, []);
 
   useEffect(() => {
     fenRef.current = fen;
@@ -285,17 +308,27 @@ function App() {
   };
 
   const fetchGames = async () => {
-    if (!username.trim()) return;
+    const player = username.trim();
+    setGamesOpen(true);
+    setSearchError("");
+    setGames([]);
+    if (!player) {
+      setSearchError("Enter a Chess.com username to find games.");
+      return;
+    }
+
     reviewRunRef.current += 1;
+    setGamesLoading(true);
 
     try {
       const response = await fetch(
-        `https://chess-analyzer-e2o0.onrender.com/games/${username.trim()}`
+        `https://chess-analyzer-e2o0.onrender.com/games/${encodeURIComponent(player)}`
       );
-
       const data = await response.json();
-
-      setGames(data);
+      if (!response.ok) throw new Error(data.error || "Could not fetch games.");
+      const results = Array.isArray(data) ? data : Array.isArray(data.games) ? data.games : [];
+      setGames(results);
+      if (!results.length) setSearchError(`No recent games found for ${player}.`);
       setFenHistory([START_FEN]);
       setMoveHistory([]);
       setUciMoveHistory([]);
@@ -308,7 +341,10 @@ function App() {
       setCurrentMove(0);
       resetAnalysis();
     } catch (error) {
-      console.log(error);
+      console.error("Could not fetch player games:", error);
+      setSearchError("Could not fetch games. Check the username and try again.");
+    } finally {
+      setGamesLoading(false);
     }
   };
 
@@ -747,6 +783,8 @@ function App() {
   };
 
   const setSelectedGame = (game) => {
+    setGamesOpen(false);
+    setSearchError("");
     if (game.pgn) loadGame(game.pgn, game);
   };
 
@@ -1030,7 +1068,10 @@ function App() {
       boardStyle: {
         width: "100%",
         height: "100%",
+        borderRadius: "6px",
       },
+      lightSquareStyle: { backgroundColor: "#f1f0ed" },
+      darkSquareStyle: { backgroundColor: "#a9adb1" },
     }),
     [fen, retryMoveIndex, fullReview]
   );
@@ -1048,22 +1089,74 @@ function App() {
         </div>
         <form
           className="player-search"
+          ref={searchRef}
           onSubmit={(event) => {
             event.preventDefault();
             fetchGames();
           }}
         >
-          <label htmlFor="chess-username">Chess.com username</label>
+          <label htmlFor="chess-username">Find a player’s games</label>
           <div className="search-controls">
             <input
               id="chess-username"
               type="text"
-              placeholder="Enter username"
+              placeholder="Search Chess.com username"
+              autoComplete="off"
+              disabled={gamesLoading}
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
+              aria-controls="game-search-results"
+              aria-expanded={gamesOpen}
+              onChange={(event) => {
+                setUsername(event.target.value);
+                setGamesOpen(false);
+                setGames([]);
+                setSearchError("");
+              }}
             />
-            <button className="primary-button" type="submit">Get games</button>
+            <button className="primary-button" type="submit" disabled={gamesLoading}>
+              {gamesLoading ? "Searching…" : "Find games"}
+            </button>
           </div>
+          {gamesOpen && (
+            <div className="game-search-dropdown" id="game-search-results" role="listbox" aria-label="Player games">
+              <div className="search-dropdown-heading">
+                <strong>{gamesLoading ? "Searching recent games" : games.length ? `Recent games · ${games.length}` : "Game search"}</strong>
+                <button type="button" aria-label="Close game results" onClick={() => setGamesOpen(false)}>×</button>
+              </div>
+              {gamesLoading ? (
+                <p className="search-dropdown-message">Fetching the player’s latest Chess.com games…</p>
+              ) : searchError ? (
+                <p className="search-dropdown-message search-dropdown-error" role="status">{searchError}</p>
+              ) : (
+                <div className="search-game-list">
+                  {games.map((game, index) => {
+                    const whiteWon = game.white?.result === "win";
+                    const blackWon = game.black?.result === "win";
+                    const resultLabel = whiteWon ? "White won" : blackWon ? "Black won" : "Draw";
+                    const dateLabel = game.end_time ? new Date(game.end_time * 1000).toLocaleDateString() : game.time_class || "Game";
+                    return (
+                      <button
+                        className="search-game-option"
+                        type="button"
+                        role="option"
+                        aria-selected="false"
+                        key={game.url || index}
+                        onClick={() => setSelectedGame(game)}
+                      >
+                        <span className="search-game-players">
+                          <strong>{game.white?.username || "White"}</strong>
+                          <span>vs</span>
+                          <strong>{game.black?.username || "Black"}</strong>
+                          <small>{dateLabel} · {game.time_class || "Game"}</small>
+                        </span>
+                        <span className="search-game-result">{resultLabel}<b aria-hidden="true">→</b></span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </form>
       </header>
 
@@ -1210,55 +1303,42 @@ function App() {
               <span className="subtle-count">{moveHistory.length} plies</span>
             </div>
             {moveHistory.length ? (
-              <div className="move-list">
-                {moveHistory.map((move, index) => {
-                  const review = moveReviews[index];
-                  const selected = currentMove === index + 1;
-                  return (
-                    <button
-                      className={`move-item ${selected ? "is-selected" : ""}`}
-                      key={`${index}-${move}`}
-                      onClick={() => jumpToMove(index + 1)}
-                      aria-current={selected ? "step" : undefined}
-                    >
-                      <span className="move-number">{index % 2 === 0 ? `${Math.floor(index / 2) + 1}.` : ""}</span>
-                      <span>{move}</span>
-                      {review && <QualityIcon quality={review.quality} size={19} />}
-                    </button>
-                  );
-                })}
-              </div>
+              <>
+                <div className="move-list-head" aria-hidden="true"><span /> <span>White</span><span>Black</span></div>
+                <div className="move-list">
+                  {Array.from({ length: Math.ceil(moveHistory.length / 2) }, (_, rowIndex) => {
+                    const whiteIndex = rowIndex * 2;
+                    const blackIndex = whiteIndex + 1;
+                    const renderMove = (index) => {
+                      const review = moveReviews[index];
+                      const selected = currentMove === index + 1;
+                      return (
+                        <button
+                          className={`move-item ${selected ? "is-selected" : ""} ${index % 2 ? "black-move" : "white-move"}`}
+                          key={`${index}-${moveHistory[index]}`}
+                          onClick={() => jumpToMove(index + 1)}
+                          aria-current={selected ? "step" : undefined}
+                        >
+                          <span>{moveHistory[index]}</span>
+                          {review && <QualityIcon quality={review.quality} size={19} />}
+                        </button>
+                      );
+                    };
+                    return (
+                      <div className="move-pair" key={rowIndex}>
+                        <span className="move-number">{rowIndex + 1}.</span>
+                        {renderMove(whiteIndex)}
+                        {blackIndex < moveHistory.length ? renderMove(blackIndex) : <span className="move-empty" />}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             ) : (
               <p className="empty-state">Load one of your recent games to review its moves.</p>
             )}
           </section>
 
-          <section className="panel games-panel">
-            <div className="panel-heading compact-heading">
-              <div><p className="eyebrow">CHESS.COM</p><h2>Recent games</h2></div>
-              <span className="subtle-count">{games.length}</span>
-            </div>
-            {games.length ? (
-              <div className="game-list">
-                {games.map((game, index) => (
-                  <button
-                    className="game-item"
-                    key={game.url || index}
-                    onClick={() => setSelectedGame(game)}
-                  >
-                    <span className="game-matchup">
-                      <strong>{game.white?.username || "White"}</strong>
-                      <span>vs</span>
-                      <strong>{game.black?.username || "Black"}</strong>
-                    </span>
-                    <span className="game-meta">{game.time_class || "Game"} · Open review →</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="empty-state">Search a Chess.com username to load the latest games.</p>
-            )}
-          </section>
         </aside>
       </main>
     </div>
