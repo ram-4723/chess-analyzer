@@ -30,6 +30,50 @@ const QUALITY_STYLES = {
 
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
 
+const ACCURACY_LABEL = "Estimated accuracy";
+// A small transparent opening book for common first moves. Unmatched moves
+// are scored normally; this avoids calling arbitrary early moves “book”.
+const OPENING_BOOK_LINES = [
+  ["e4", "e5", "Nf3", "Nc6", "Bb5"], ["e4", "e5", "Nf3", "Nc6", "Bc4"],
+  ["e4", "e5", "Nf3", "Nf6"], ["e4", "c5"], ["e4", "e6"], ["e4", "c6"],
+  ["e4", "d5"], ["e4", "d6"], ["e4", "g6"], ["d4", "d5", "c4"],
+  ["d4", "Nf6", "c4", "g6"], ["d4", "Nf6", "c4", "e6"],
+  ["d4", "Nf6", "Nf3", "g6"], ["d4", "d5", "Bf4"], ["c4", "e5"],
+  ["Nf3", "d5"], ["Nf3", "Nf6"],
+];
+
+function EvaluationGraph({ points, currentMove, onSelectMove }) {
+  if (!points?.length) {
+    return <div className="graph-empty">Run a full review to see the game’s evaluation trend.</div>;
+  }
+  const width = 600;
+  const height = 160;
+  const pad = 12;
+  const values = points.map((point) => Math.max(-900, Math.min(900, point / 100)));
+  const x = (index) => pad + (points.length < 2 ? 0 : (index / (points.length - 1)) * (width - pad * 2));
+  const y = (value) => pad + ((4.5 - value) / 9) * (height - pad * 2);
+  const line = values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
+  const zeroY = y(0);
+  return (
+    <div className="eval-graph-wrap">
+      <div className="graph-legend"><span><i className="white-dot" /> White advantage</span><span><i className="black-dot" /> Black advantage</span></div>
+      <svg className="eval-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Evaluation through the game">
+        <rect x={pad} y={pad} width={width - pad * 2} height={zeroY - pad} rx="8" className="graph-white-area" />
+        <rect x={pad} y={zeroY} width={width - pad * 2} height={height - pad - zeroY} rx="8" className="graph-black-area" />
+        <line x1={pad} y1={zeroY} x2={width - pad} y2={zeroY} className="graph-zero" />
+        <polyline points={line} className="graph-line" />
+        {values.map((value, index) => (
+          <circle key={index} cx={x(index)} cy={y(value)} r={index === currentMove ? 5 : 2.4}
+            className={index === currentMove ? "graph-point current" : "graph-point"}
+            role="button" tabIndex={0} aria-label={index === 0 ? "Start position" : `Move ${index}`}
+            onClick={() => onSelectMove(index)} onKeyDown={(event) => event.key === "Enter" && onSelectMove(index)} />
+        ))}
+      </svg>
+      <div className="graph-axis"><span>Start</span><span>Move {points.length - 1}</span></div>
+    </div>
+  );
+}
+
 const QualityIcon = ({ quality, size = 34 }) => {
   const qualityStyle = getQualityStyle(quality);
   if (!qualityStyle) return null;
@@ -212,6 +256,12 @@ function App() {
   const [moveQuality, setMoveQuality] = useState(null);
   const [evalLoss, setEvalLoss] = useState(null);
   const [moveReviews, setMoveReviews] = useState({});
+  const [fullReview, setFullReview] = useState(null);
+  const [reviewState, setReviewState] = useState({ status: "idle", completed: 0, total: 0 });
+  const [gameInfo, setGameInfo] = useState(null);
+  const [retryMoveIndex, setRetryMoveIndex] = useState(null);
+  const [retryFeedback, setRetryFeedback] = useState("");
+  const reviewRunRef = useRef(0);
 
   const stockfishRef = useRef(null);
   const fenRef = useRef(START_FEN);
@@ -233,6 +283,7 @@ function App() {
 
   const fetchGames = async () => {
     if (!username.trim()) return;
+    reviewRunRef.current += 1;
 
     try {
       const response = await fetch(
@@ -246,6 +297,11 @@ function App() {
       setMoveHistory([]);
       setUciMoveHistory([]);
       setMoveReviews({});
+      setFullReview(null);
+      setGameInfo(null);
+      setRetryMoveIndex(null);
+      setRetryFeedback("");
+      setReviewState({ status: "idle", completed: 0, total: 0 });
       setCurrentMove(0);
       resetAnalysis();
     } catch (error) {
@@ -253,7 +309,8 @@ function App() {
     }
   };
 
-  const loadGame = (pgn) => {
+  const loadGame = (pgn, info = {}) => {
+    reviewRunRef.current += 1;
     try {
       const loadedGame = new Chess();
       loadedGame.loadPgn(pgn);
@@ -276,6 +333,20 @@ function App() {
       setMoveHistory(sans);
       setUciMoveHistory(uciMoves);
       setMoveReviews({});
+      setFullReview(null);
+      setReviewState({ status: "idle", completed: 0, total: 0 });
+      setRetryMoveIndex(null);
+      setRetryFeedback("");
+      const headers = loadedGame.getHeaders();
+      setGameInfo({
+        white: info.white?.username || headers.White || "White",
+        black: info.black?.username || headers.Black || "Black",
+        result: headers.Result || (info.white?.result === "win" ? `${info.white?.username || "White"} won` : info.black?.result === "win" ? `${info.black?.username || "Black"} won` : info.white?.result === "agreed" || info.white?.result === "repetition" ? "Draw" : "—"),
+        date: info.end_time ? new Date(info.end_time * 1000).toLocaleDateString() : headers.Date || "Date unavailable",
+        timeClass: info.time_class || "Game",
+        opening: headers.Opening || info.opening?.name || (info.eco ? decodeURIComponent(info.eco.split("/").filter(Boolean).pop().replace(/-/g, " ")) : "Opening not provided"),
+        event: headers.Event || "Chess.com game",
+      });
       setFenHistory(fens);
       setCurrentMove(0);
       resetAnalysis();
@@ -378,6 +449,14 @@ function App() {
     if (loss <= 90) return "Inaccuracy";
     if (loss <= 200) return "Mistake";
     return "Blunder";
+  };
+
+  const estimateAccuracy = (reviews, color) => {
+    const sideReviews = reviews.filter((review) => review.color === color);
+    if (!sideReviews.length) return 100;
+    // Project-defined estimate: average per-move score from centipawn loss.
+    // It is not Chess.com's proprietary CAPS2 rating.
+    return Math.round(sideReviews.reduce((sum, review) => sum + 100 * Math.exp(-review.evalLoss / 300), 0) / sideReviews.length);
   };
 
   const isMaterialSacrifice = (previousFen, playedMove) => {
@@ -531,8 +610,87 @@ function App() {
     });
   };
 
+  const runFullReview = async () => {
+    if (!uciMoveHistory.length || reviewState.status === "running") return;
+    const runId = reviewRunRef.current + 1;
+    reviewRunRef.current = runId;
+    setReviewState({ status: "running", completed: 0, total: uciMoveHistory.length });
+    setFullReview(null);
+    const results = [];
+    const positions = [];
+    let initialWhite = 0;
+    try {
+      for (let index = 0; index < uciMoveHistory.length; index += 1) {
+        if (reviewRunRef.current !== runId) return;
+        const beforeFen = fenHistory[index];
+        const playedMove = uciMoveHistory[index];
+        const before = await analyzeFenOnce(beforeFen, Math.min(analysisDepth, 16), null, 2);
+        if (reviewRunRef.current !== runId) return;
+        const played = await analyzeFenOnce(beforeFen, Math.min(analysisDepth, 16), playedMove, 1);
+        if (reviewRunRef.current !== runId) return;
+        if (!before.score || !played.score) throw new Error(`Engine did not return a score for move ${index + 1}`);
+
+        const bestWhite = scoreToWhiteCentipawns(before.score, beforeFen);
+        if (index === 0) initialWhite = bestWhite;
+        const playedWhite = scoreToWhiteCentipawns(played.score, beforeFen);
+        const mover = beforeFen.split(" ")[1];
+        const loss = Math.max(0, mover === "w" ? bestWhite - playedWhite : playedWhite - bestWhite);
+        const bestPlayed = before.bestMove === playedMove;
+        const secondScore = before.depths?.[2] === before.depths?.[1] ? before.alternatives?.[2] : null;
+        const secondWhite = secondScore ? scoreToWhiteCentipawns(secondScore, beforeFen) : null;
+        const secondLoss = secondWhite === null ? 0 : Math.max(0, mover === "w" ? bestWhite - secondWhite : secondWhite - bestWhite);
+        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, evalLoss: loss, secondBestLoss: secondLoss, previousFen: beforeFen, playedMove });
+        const great = isGreatMove({ brilliant, playedBestMove: bestPlayed, secondBestLoss: secondLoss });
+        let quality = brilliant ? "Brilliant" : great ? "Great" : bestPlayed ? "Best" : classifyEvalLoss(loss);
+        const sanPrefix = moveHistory.slice(0, index + 1);
+        const isBook = OPENING_BOOK_LINES.some((line) => sanPrefix.every((san, prefixIndex) => line[prefixIndex] === san));
+        if (isBook) quality = "Book";
+        // A “Miss” is reserved for a major lost opportunity while the player
+        // had a clearly winning evaluation. It remains a project heuristic.
+        const playerBest = mover === "w" ? bestWhite : -bestWhite;
+        const playerPlayed = mover === "w" ? playedWhite : -playedWhite;
+        if (!isBook && !bestPlayed && playerBest >= 300 && playerPlayed <= 150 && loss >= 150) quality = "Miss";
+        const review = { index, color: mover, quality, evalLoss: loss, bestMove: before.bestMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
+        results.push(review);
+        positions.push(playedWhite);
+        setMoveReviews((existing) => ({ ...existing, [index]: review }));
+        setReviewState({ status: "running", completed: index + 1, total: uciMoveHistory.length });
+      }
+      if (reviewRunRef.current !== runId) return;
+      const allPoints = [initialWhite, ...positions];
+      const moments = results.filter((item) => ["Brilliant", "Great", "Miss", "Inaccuracy", "Mistake", "Blunder"].includes(item.quality));
+      setFullReview({ moves: results, points: allPoints, whiteAccuracy: estimateAccuracy(results, "w"), blackAccuracy: estimateAccuracy(results, "b"), moments });
+      setReviewState({ status: "complete", completed: uciMoveHistory.length, total: uciMoveHistory.length });
+    } catch (error) {
+      console.error("Full game review failed:", error);
+      setReviewState((state) => ({ ...state, status: "error", error: error.message || "Review failed" }));
+    }
+  };
+
+  const cancelFullReview = () => {
+    reviewRunRef.current += 1;
+    setReviewState((state) => ({ ...state, status: "idle" }));
+  };
+
+  const setSelectedGame = (game) => {
+    if (game.pgn) loadGame(game.pgn, game);
+  };
+
+  const moveQualityCounts = useMemo(() => {
+    if (!fullReview) return [];
+    return ["Brilliant", "Great", "Best", "Excellent", "Good", "Book", "Inaccuracy", "Mistake", "Miss", "Blunder"]
+      .map((quality) => ({ quality, count: fullReview.moves.filter((move) => move.quality === quality).length }))
+      .filter((entry) => entry.count > 0);
+  }, [fullReview]);
+
+  const retryMistake = (index) => {
+    setRetryMoveIndex(index);
+    setRetryFeedback("");
+    jumpToMove(index);
+  };
+
   const getCurrentMoveIconOverlay = () => {
-    if (currentMove === 0 || !moveQuality || moveQuality === "Checking...") {
+    if (retryMoveIndex !== null || currentMove === 0 || !moveQuality || moveQuality === "Checking...") {
       return null;
     }
 
@@ -775,12 +933,27 @@ function App() {
   const chessboardOptions = useMemo(
     () => ({
       position: fen,
+      allowDragging: retryMoveIndex !== null,
+      onPieceDrop: ({ sourceSquare, targetSquare }) => {
+        if (retryMoveIndex === null || !fullReview || !targetSquare) return false;
+        const review = fullReview.moves[retryMoveIndex];
+        try {
+          const chess = new Chess(fen);
+          const move = chess.move({ from: sourceSquare, to: targetSquare, promotion: "q" });
+          if (!move) return false;
+          const uci = `${move.from}${move.to}${move.promotion || ""}`;
+          setRetryFeedback(uci === review?.bestMove ? "correct" : "incorrect");
+        } catch {
+          return false;
+        }
+        return false;
+      },
       boardStyle: {
         width: "100%",
         height: "100%",
       },
     }),
-    [fen]
+    [fen, retryMoveIndex, fullReview]
   );
 
   return (
@@ -791,6 +964,7 @@ function App() {
           <div>
             <p className="eyebrow">GAME REVIEW</p>
             <h1>Chess Analyzer</h1>
+            <p className="header-caption">A clear, engine-powered breakdown of your game.</p>
           </div>
         </div>
         <form
@@ -826,6 +1000,12 @@ function App() {
                 <span className="status-dot" /> {engineStatus}
               </span>
             </div>
+            {retryMoveIndex !== null && (
+              <div className={`retry-banner ${retryFeedback}`} role="status">
+                <span>{retryFeedback === "correct" ? "That was Stockfish’s top move." : retryFeedback === "incorrect" ? "Not the top move. Try another legal move." : `Retry ${moveHistory[retryMoveIndex]} — find the stronger move for ${fullReview?.moves[retryMoveIndex]?.color === "w" ? "White" : "Black"}.`}</span>
+                <button onClick={() => { setRetryMoveIndex(null); setRetryFeedback(""); }}>Exit retry</button>
+              </div>
+            )}
             <div className="board-frame">
               <Chessboard options={chessboardOptions} />
               {getCurrentMoveIconOverlay()}
@@ -865,7 +1045,9 @@ function App() {
               <select
                 value={analysisDepth}
                 onChange={(event) => {
+                  if (reviewState.status === "running") cancelFullReview();
                   setMoveReviews({});
+                  setFullReview(null);
                   setAnalysisDepth(Number(event.target.value));
                 }}
               >
@@ -881,6 +1063,65 @@ function App() {
               <div><span>Best move</span><strong>{getBestMoveSan(bestMove)}</strong></div>
               <div><span>Best line</span><strong className="best-line">{getBestLineSan()}</strong></div>
             </div>
+          </section>
+
+          <section className="panel full-review-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">FULL GAME</p>
+                <h2>{gameInfo ? `${gameInfo.white} vs ${gameInfo.black}` : "Game Review"}</h2>
+                <p className="review-subtitle">{gameInfo ? `${gameInfo.opening} · ${gameInfo.date} · ${gameInfo.timeClass}` : "Analyze every move to see the full match report."}</p>
+              </div>
+              {gameInfo && <span className="result-tag">{gameInfo.result}</span>}
+            </div>
+            <div className="review-actions">
+              {reviewState.status === "running" ? (
+                <>
+                  <button className="primary-button" disabled>Reviewing {reviewState.completed}/{reviewState.total}</button>
+                  <button className="quiet-button" onClick={cancelFullReview}>Cancel</button>
+                </>
+              ) : (
+                <button className="primary-button review-button" onClick={runFullReview} disabled={!moveHistory.length}>
+                  {reviewState.status === "complete" ? "Run review again" : "Run full game review"}
+                </button>
+              )}
+              {reviewState.status === "running" && <progress max={reviewState.total} value={reviewState.completed} />}
+            </div>
+            {reviewState.status === "error" && <p className="review-error">{reviewState.error}. Try a lower analysis depth or run it again.</p>}
+            {fullReview ? (
+              <>
+                <div className="accuracy-grid">
+                  <div className="accuracy-card white-accuracy"><span>White · {ACCURACY_LABEL}</span><strong>{fullReview.whiteAccuracy}<small>%</small></strong><div className="accuracy-meter" role="progressbar" aria-label="White estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.whiteAccuracy}><i style={{ width: `${fullReview.whiteAccuracy}%` }} /></div></div>
+                  <div className="accuracy-card black-accuracy"><span>Black · {ACCURACY_LABEL}</span><strong>{fullReview.blackAccuracy}<small>%</small></strong><div className="accuracy-meter black-meter" role="progressbar" aria-label="Black estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.blackAccuracy}><i style={{ width: `${fullReview.blackAccuracy}%` }} /></div></div>
+                </div>
+                <p className="accuracy-note">App estimate based on Stockfish move loss; not Chess.com’s proprietary accuracy score.</p>
+                <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
+                <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
+                <div className="review-section-heading"><h3>Move breakdown</h3><span>{fullReview.moves.length} analyzed</span></div>
+                <div className="quality-counts">
+                  {moveQualityCounts.map(({ quality, count }) => <span className="quality-count" key={quality}><QualityIcon quality={quality} size={18} />{quality}<b>{count}</b></span>)}
+                </div>
+                <div className="review-section-heading moments-heading"><h3>Key moments</h3><span>{fullReview.moments.length}</span></div>
+                {fullReview.moments.length ? (
+                  <div className="moment-list">
+                    {fullReview.moments.map((moment) => (
+                      <div className="moment-row" key={moment.index}>
+                        <button className="moment-item" onClick={() => jumpToMove(moment.index + 1)}>
+                          <QualityIcon quality={moment.quality} size={23} />
+                          <span><b>{moment.color === "w" ? "White" : "Black"} · {Math.floor(moment.index / 2) + 1}{moment.color === "w" ? "." : "..."} {moveHistory[moment.index]}</b><small>{moment.quality} · {moment.evalLoss ? `${(moment.evalLoss / 100).toFixed(2)} pawn loss` : "Turning point"}</small></span>
+                          <span className="moment-arrow">→</span>
+                        </button>
+                        {["Inaccuracy", "Mistake", "Miss", "Blunder"].includes(moment.quality) && <button className="retry-link" onClick={() => retryMistake(moment.index)}>Retry</button>}
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="empty-state">No major turning points were flagged by this review.</p>}
+              </>
+            ) : reviewState.status === "running" ? (
+              <p className="review-hint">Stockfish is checking each move in the background. You can keep using the board.</p>
+            ) : (
+              <p className="review-hint">The full report includes both accuracy estimates, the evaluation graph, move labels, and key moments.</p>
+            )}
           </section>
 
           <section className="panel moves-panel">
@@ -923,7 +1164,7 @@ function App() {
                   <button
                     className="game-item"
                     key={game.url || index}
-                    onClick={() => game.pgn && loadGame(game.pgn)}
+                    onClick={() => setSelectedGame(game)}
                   >
                     <span className="game-matchup">
                       <strong>{game.white?.username || "White"}</strong>
