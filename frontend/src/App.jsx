@@ -545,40 +545,70 @@ function App() {
     return Math.round((weightedMean + harmonicMean) / 2);
   };
 
-  const isMaterialSacrifice = (previousFen, playedMove) => {
+  const materialBalanceFor = (chess, color) => chess.board().flat().reduce((balance, piece) => {
+    if (!piece || piece.type === "k") return balance;
+    const value = PIECE_VALUES[piece.type] || 0;
+    return balance + (piece.color === color ? value : -value);
+  }, 0);
+
+  const findMaterialSacrifice = (previousFen, playedMove) => {
     try {
       const chess = new Chess(previousFen);
+      const mover = chess.turn();
+      const materialBefore = materialBalanceFor(chess, mover);
       const move = chess.move({
         from: playedMove.slice(0, 2),
         to: playedMove.slice(2, 4),
         promotion: playedMove[4] || "q",
       });
 
-      if (!move) return false;
+      if (!move) return null;
       const movedPiece = chess.get(move.to);
       const movedPieceValue = movedPiece ? PIECE_VALUES[movedPiece.type] || 0 : 0;
-      if (movedPieceValue < 300) return false;
+      if (movedPieceValue < 300) return null;
 
-      // Require a legal immediate capture of the offered piece. Merely moving
-      // a piece to a square controlled by a pinned piece is not a sacrifice.
-      return chess
-        .moves({ verbose: true })
-        .some((reply) => reply.to === move.to && reply.captured);
+      // A piece being attacked does not by itself make a sacrifice. Check that
+      // the opponent can legally take it, then account for any immediate
+      // recapture so routine exchanges and defended pieces do not qualify.
+      const captures = chess.moves({ verbose: true }).filter((reply) => reply.to === move.to && reply.captured);
+      for (const capture of captures) {
+        const afterCapture = new Chess(chess.fen());
+        afterCapture.move({ from: capture.from, to: capture.to, promotion: capture.promotion });
+        let bestMaterialAfterReply = materialBalanceFor(afterCapture, mover);
+
+        const recaptures = afterCapture.moves({ verbose: true }).filter((reply) => reply.to === capture.to && reply.captured);
+        for (const recapture of recaptures) {
+          const afterRecapture = new Chess(afterCapture.fen());
+          afterRecapture.move({ from: recapture.from, to: recapture.to, promotion: recapture.promotion });
+          bestMaterialAfterReply = Math.max(bestMaterialAfterReply, materialBalanceFor(afterRecapture, mover));
+        }
+
+        const netMaterialOffered = materialBefore - bestMaterialAfterReply;
+        if (netMaterialOffered >= 200) return { netMaterialOffered, offeredPieceValue: movedPieceValue };
+      }
+      return null;
     } catch {
-      return false;
+      return null;
     }
   };
 
   const isBrilliantMove = ({
     playedBestMove,
     expectedPointsLoss,
+    centipawnLoss,
     bestExpectedPoints,
     playedExpectedPoints,
     previousFen,
     playedMove,
   }) => {
-    const sacrifice = isMaterialSacrifice(previousFen, playedMove);
-    return (playedBestMove || expectedPointsLoss <= 0.01) && sacrifice && playedExpectedPoints >= 0.4 && bestExpectedPoints < 0.95;
+    const sacrifice = findMaterialSacrifice(previousFen, playedMove);
+    const isBestOrNearBest = playedBestMove || (expectedPointsLoss <= 0.005 && centipawnLoss <= 15);
+    return Boolean(
+      isBestOrNearBest &&
+      sacrifice &&
+      playedExpectedPoints >= 0.4 &&
+      bestExpectedPoints < 0.95
+    );
   };
 
   const isGreatMove = ({
@@ -588,7 +618,7 @@ function App() {
     bestExpectedPoints,
   }) => {
     // Approximate Chess.com's “critical turning point / only good move” rule.
-    return !brilliant && playedBestMove && secondBestExpectedPointsLoss >= 0.1 && bestExpectedPoints > 0.25 && bestExpectedPoints < 0.95;
+    return !brilliant && playedBestMove && secondBestExpectedPointsLoss >= 0.15 && bestExpectedPoints > 0.25 && bestExpectedPoints < 0.95;
   };
 
   const analyzeFenOnce = (fenToAnalyze, depth, forcedMove = null, multiPv = 1) => {
@@ -747,7 +777,7 @@ function App() {
         const secondScore = before.depths?.[2] === before.depths?.[1] ? before.alternatives?.[2] : null;
         const secondExpectedPoints = secondScore ? scoreToExpectedPoints(secondScore, beforeFen) : null;
         const secondBestExpectedPointsLoss = secondExpectedPoints === null ? 0 : Math.max(0, bestExpectedPoints - secondExpectedPoints);
-        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, expectedPointsLoss, bestExpectedPoints, playedExpectedPoints, previousFen: beforeFen, playedMove });
+        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, expectedPointsLoss, centipawnLoss: cpLoss, bestExpectedPoints, playedExpectedPoints, previousFen: beforeFen, playedMove });
         const great = isGreatMove({ brilliant, playedBestMove: bestPlayed, secondBestExpectedPointsLoss, bestExpectedPoints });
         let quality = brilliant ? "Brilliant" : great ? "Great" : classifyExpectedPointsLoss(expectedPointsLoss, bestPlayed);
         const sanPrefix = moveHistory.slice(0, index + 1);
@@ -998,6 +1028,7 @@ function App() {
         const brilliant = isBrilliantMove({
           playedBestMove,
           expectedPointsLoss,
+          centipawnLoss: normalizedLoss,
           bestExpectedPoints,
           playedExpectedPoints,
           previousFen,
