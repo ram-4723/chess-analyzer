@@ -31,6 +31,7 @@ const QUALITY_STYLES = {
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
 
 const ACCURACY_LABEL = "Estimated accuracy";
+const WIN_PERCENT_SLOPE = 0.00368208;
 // A small transparent opening book for common first moves. Unmatched moves
 // are scored normally; this avoids calling arbitrary early moves “book”.
 const OPENING_BOOK_LINES = [
@@ -255,6 +256,7 @@ function App() {
 
   const [moveQuality, setMoveQuality] = useState(null);
   const [evalLoss, setEvalLoss] = useState(null);
+  const [expectedPointLoss, setExpectedPointLoss] = useState(null);
   const [moveReviews, setMoveReviews] = useState({});
   const [fullReview, setFullReview] = useState(null);
   const [reviewState, setReviewState] = useState({ status: "idle", completed: 0, total: 0 });
@@ -279,6 +281,7 @@ function App() {
     setEngineDepth(null);
     setMoveQuality(null);
     setEvalLoss(null);
+    setExpectedPointLoss(null);
   };
 
   const fetchGames = async () => {
@@ -441,22 +444,69 @@ function App() {
     return sideToMove === "b" ? -score.value : score.value;
   };
 
-  const classifyEvalLoss = (loss) => {
-    // These are project thresholds, not Chess.com's proprietary labels.
-    // Keep “Best” for the engine's actual top move; score loss grades the rest.
-    if (loss <= 15) return "Excellent";
-    if (loss <= 40) return "Good";
-    if (loss <= 90) return "Inaccuracy";
-    if (loss <= 200) return "Mistake";
+  const scoreToExpectedPoints = (score, fenToScore) => {
+    // Stockfish WDL is position/material-aware and is reported from the side
+    // to move's perspective. It is a better grading input than raw centipawns.
+    if (score?.wdl) {
+      const [wins, draws, losses] = score.wdl;
+      const total = wins + draws + losses;
+      if (total > 0) return (wins + draws / 2) / total;
+    }
+
+    // Fallback for engine builds that don't implement UCI_ShowWDL.
+    const whiteCp = scoreToWhiteCentipawns(score, fenToScore);
+    const moverCp = fenToScore.split(" ")[1] === "w" ? whiteCp : -whiteCp;
+    const boundedCp = Math.max(-3000, Math.min(3000, moverCp));
+    return 1 / (1 + Math.exp(-WIN_PERCENT_SLOPE * boundedCp));
+  };
+
+  const winPercentFromWhiteCp = (whiteCp) => {
+    const boundedCp = Math.max(-3000, Math.min(3000, whiteCp));
+    return 100 / (1 + Math.exp(-WIN_PERCENT_SLOPE * boundedCp));
+  };
+
+  const accuracyForWinPercentLoss = (loss) => {
+    if (loss <= 0) return 100;
+    // Public Lichess move-accuracy curve; Chess.com's CAPS2 curve is private.
+    const raw = 103.1668100711649 * Math.exp(-0.04354415386753951 * loss) - 3.166924740191411 + 1;
+    return Math.max(0, Math.min(100, raw));
+  };
+
+  const classifyExpectedPointsLoss = (loss, playedBestMove) => {
+    // Chess.com publicly documents these Expected Points V2 bands.
+    // WDL is rounded, so only Stockfish's actual top move earns “Best”.
+    if (playedBestMove) return "Best";
+    if (loss < 0.02) return "Excellent";
+    if (loss < 0.05) return "Good";
+    if (loss < 0.10) return "Inaccuracy";
+    if (loss < 0.20) return "Mistake";
     return "Blunder";
   };
 
-  const estimateAccuracy = (reviews, color) => {
+  const estimateAccuracy = (reviews, color, whiteWinPercents) => {
     const sideReviews = reviews.filter((review) => review.color === color);
-    if (!sideReviews.length) return 100;
-    // Project-defined estimate: average per-move score from centipawn loss.
-    // It is not Chess.com's proprietary CAPS2 rating.
-    return Math.round(sideReviews.reduce((sum, review) => sum + 100 * Math.exp(-review.evalLoss / 300), 0) / sideReviews.length);
+    if (!sideReviews.length) return null;
+
+    // Like Lichess's published game score, combine a volatility-weighted mean
+    // with the harmonic mean so one large error is not hidden by many easy moves.
+    const plyCount = Math.max(0, whiteWinPercents.length - 1);
+    const windowSize = Math.max(2, Math.min(8, Math.floor(plyCount / 10)));
+    const firstWindow = whiteWinPercents.slice(0, windowSize);
+    const windows = [
+      ...Array(Math.max(0, Math.min(windowSize, whiteWinPercents.length) - 2)).fill(firstWindow),
+      ...Array.from({ length: Math.max(0, whiteWinPercents.length - windowSize + 1) }, (_, start) => whiteWinPercents.slice(start, start + windowSize)),
+    ].slice(0, plyCount);
+    const scored = sideReviews.map((review) => {
+      const samples = windows[review.index] || firstWindow;
+      const mean = samples.reduce((sum, value) => sum + value, 0) / Math.max(1, samples.length);
+      const variance = samples.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, samples.length);
+      const weight = Math.max(0.5, Math.min(12, Math.sqrt(variance)));
+      return { accuracy: review.accuracy, weight };
+    });
+    const weightTotal = scored.reduce((sum, item) => sum + item.weight, 0);
+    const weightedMean = scored.reduce((sum, item) => sum + item.accuracy * item.weight, 0) / weightTotal;
+    const harmonicMean = scored.length / scored.reduce((sum, item) => sum + 1 / Math.max(item.accuracy, 0.01), 0);
+    return Math.round((weightedMean + harmonicMean) / 2);
   };
 
   const isMaterialSacrifice = (previousFen, playedMove) => {
@@ -485,25 +535,24 @@ function App() {
 
   const isBrilliantMove = ({
     playedBestMove,
-    evalLoss,
-    secondBestLoss,
+    expectedPointsLoss,
+    bestExpectedPoints,
+    playedExpectedPoints,
     previousFen,
     playedMove,
   }) => {
-    // Require the engine's top move, a real offered piece, and a clear gap to
-    // the next choice. This makes the label rarer and less arbitrary.
     const sacrifice = isMaterialSacrifice(previousFen, playedMove);
-    return playedBestMove && evalLoss <= 15 && secondBestLoss >= 100 && sacrifice;
+    return (playedBestMove || expectedPointsLoss <= 0.01) && sacrifice && playedExpectedPoints >= 0.4 && bestExpectedPoints < 0.95;
   };
 
   const isGreatMove = ({
     brilliant,
     playedBestMove,
-    secondBestLoss,
+    secondBestExpectedPointsLoss,
+    bestExpectedPoints,
   }) => {
-    // “Great” here means the played top move was materially better than the
-    // next engine choice, without meeting the stricter sacrifice rule.
-    return !brilliant && playedBestMove && secondBestLoss >= 70;
+    // Approximate Chess.com's “critical turning point / only good move” rule.
+    return !brilliant && playedBestMove && secondBestExpectedPointsLoss >= 0.1 && bestExpectedPoints > 0.25 && bestExpectedPoints < 0.95;
   };
 
   const analyzeFenOnce = (fenToAnalyze, depth, forcedMove = null, multiPv = 1) => {
@@ -526,12 +575,13 @@ function App() {
           worker.terminate();
           reject(new Error("Stockfish analysis timed out"));
         }
-      }, 30000);
+      }, depth > 16 ? 60000 : 30000);
 
       worker.onmessage = (event) => {
         const line = String(event.data);
 
         if (line === "uciok") {
+          worker.postMessage("setoption name UCI_ShowWDL value true");
           worker.postMessage(`setoption name MultiPV value ${multiPv}`);
           worker.postMessage("isready");
           return;
@@ -554,18 +604,22 @@ function App() {
           const lineNumber = multipvMatch ? Number(multipvMatch[1]) : 1;
           const cpMatch = line.match(/score cp (-?\d+)/);
           const mateMatch = line.match(/score mate (-?\d+)/);
+          const wdlMatch = line.match(/\bwdl\s+(\d+)\s+(\d+)\s+(\d+)/i);
           const pvMatch = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
+          const wdl = wdlMatch ? wdlMatch.slice(1).map(Number) : null;
 
           let score = null;
           if (mateMatch) {
             score = {
               type: "mate",
               value: Number(mateMatch[1]),
+              wdl,
             };
           } else if (cpMatch) {
             score = {
               type: "cp",
               value: Number(cpMatch[1]),
+              wdl,
             };
           }
 
@@ -618,48 +672,68 @@ function App() {
     setFullReview(null);
     const results = [];
     const positions = [];
+    const whiteWinPercents = [];
     let initialWhite = 0;
     try {
       for (let index = 0; index < uciMoveHistory.length; index += 1) {
         if (reviewRunRef.current !== runId) return;
         const beforeFen = fenHistory[index];
+        const afterFen = fenHistory[index + 1];
         const playedMove = uciMoveHistory[index];
-        const before = await analyzeFenOnce(beforeFen, Math.min(analysisDepth, 16), null, 2);
+        const before = await analyzeFenOnce(beforeFen, Math.min(analysisDepth, 20), null, 2);
         if (reviewRunRef.current !== runId) return;
-        const played = await analyzeFenOnce(beforeFen, Math.min(analysisDepth, 16), playedMove, 1);
+        const after = await analyzeFenOnce(afterFen, Math.min(analysisDepth, 20), null, 1);
         if (reviewRunRef.current !== runId) return;
-        if (!before.score || !played.score) throw new Error(`Engine did not return a score for move ${index + 1}`);
+        if (!before.score) throw new Error(`Engine did not return a best-position score for move ${index + 1}`);
 
         const bestWhite = scoreToWhiteCentipawns(before.score, beforeFen);
         if (index === 0) initialWhite = bestWhite;
-        const playedWhite = scoreToWhiteCentipawns(played.score, beforeFen);
         const mover = beforeFen.split(" ")[1];
-        const loss = Math.max(0, mover === "w" ? bestWhite - playedWhite : playedWhite - bestWhite);
+        const afterPosition = new Chess(afterFen);
+        let playedWhite;
+        let playedExpectedPoints;
+        if (after.score) {
+          playedWhite = scoreToWhiteCentipawns(after.score, afterFen);
+          playedExpectedPoints = 1 - scoreToExpectedPoints(after.score, afterFen);
+        } else if (afterPosition.isCheckmate()) {
+          playedWhite = mover === "w" ? 100000 : -100000;
+          playedExpectedPoints = 1;
+        } else if (afterPosition.isDraw()) {
+          playedWhite = 0;
+          playedExpectedPoints = 0.5;
+        } else {
+          throw new Error(`Engine did not return a played-position score for move ${index + 1}`);
+        }
+        const bestExpectedPoints = scoreToExpectedPoints(before.score, beforeFen);
+        const expectedPointsLoss = Math.max(0, bestExpectedPoints - playedExpectedPoints);
+        const cpLoss = Math.max(0, mover === "w" ? bestWhite - playedWhite : playedWhite - bestWhite);
         const bestPlayed = before.bestMove === playedMove;
         const secondScore = before.depths?.[2] === before.depths?.[1] ? before.alternatives?.[2] : null;
-        const secondWhite = secondScore ? scoreToWhiteCentipawns(secondScore, beforeFen) : null;
-        const secondLoss = secondWhite === null ? 0 : Math.max(0, mover === "w" ? bestWhite - secondWhite : secondWhite - bestWhite);
-        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, evalLoss: loss, secondBestLoss: secondLoss, previousFen: beforeFen, playedMove });
-        const great = isGreatMove({ brilliant, playedBestMove: bestPlayed, secondBestLoss: secondLoss });
-        let quality = brilliant ? "Brilliant" : great ? "Great" : bestPlayed ? "Best" : classifyEvalLoss(loss);
+        const secondExpectedPoints = secondScore ? scoreToExpectedPoints(secondScore, beforeFen) : null;
+        const secondBestExpectedPointsLoss = secondExpectedPoints === null ? 0 : Math.max(0, bestExpectedPoints - secondExpectedPoints);
+        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, expectedPointsLoss, bestExpectedPoints, playedExpectedPoints, previousFen: beforeFen, playedMove });
+        const great = isGreatMove({ brilliant, playedBestMove: bestPlayed, secondBestExpectedPointsLoss, bestExpectedPoints });
+        let quality = brilliant ? "Brilliant" : great ? "Great" : classifyExpectedPointsLoss(expectedPointsLoss, bestPlayed);
         const sanPrefix = moveHistory.slice(0, index + 1);
         const isBook = OPENING_BOOK_LINES.some((line) => sanPrefix.every((san, prefixIndex) => line[prefixIndex] === san));
+        const missedWin = index > 0 && results[index - 1].expectedPointsLoss >= 0.05 && bestExpectedPoints >= 0.75 && playedExpectedPoints <= 0.5 && expectedPointsLoss >= 0.1;
         if (isBook) quality = "Book";
-        // A “Miss” is reserved for a major lost opportunity while the player
-        // had a clearly winning evaluation. It remains a project heuristic.
-        const playerBest = mover === "w" ? bestWhite : -bestWhite;
-        const playerPlayed = mover === "w" ? playedWhite : -playedWhite;
-        if (!isBook && !bestPlayed && playerBest >= 300 && playerPlayed <= 150 && loss >= 150) quality = "Miss";
-        const review = { index, color: mover, quality, evalLoss: loss, bestMove: before.bestMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
+        else if (missedWin) quality = "Miss";
+        const winBefore = winPercentFromWhiteCp(mover === "w" ? bestWhite : -bestWhite);
+        const winAfter = winPercentFromWhiteCp(mover === "w" ? playedWhite : -playedWhite);
+        const moveAccuracy = accuracyForWinPercentLoss(Math.max(0, winBefore - winAfter));
+        const review = { index, color: mover, quality, evalLoss: cpLoss, expectedPointsLoss, accuracy: moveAccuracy, winBefore, winAfter, bestMove: before.bestMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
         results.push(review);
         positions.push(playedWhite);
+        if (index === 0) whiteWinPercents.push(winPercentFromWhiteCp(initialWhite));
+        whiteWinPercents.push(winPercentFromWhiteCp(playedWhite));
         setMoveReviews((existing) => ({ ...existing, [index]: review }));
         setReviewState({ status: "running", completed: index + 1, total: uciMoveHistory.length });
       }
       if (reviewRunRef.current !== runId) return;
       const allPoints = [initialWhite, ...positions];
       const moments = results.filter((item) => ["Brilliant", "Great", "Miss", "Inaccuracy", "Mistake", "Blunder"].includes(item.quality));
-      setFullReview({ moves: results, points: allPoints, whiteAccuracy: estimateAccuracy(results, "w"), blackAccuracy: estimateAccuracy(results, "b"), moments });
+      setFullReview({ moves: results, points: allPoints, whiteAccuracy: estimateAccuracy(results, "w", whiteWinPercents), blackAccuracy: estimateAccuracy(results, "b", whiteWinPercents), moments });
       setReviewState({ status: "complete", completed: uciMoveHistory.length, total: uciMoveHistory.length });
     } catch (error) {
       console.error("Full game review failed:", error);
@@ -812,6 +886,7 @@ function App() {
       if (currentMove === 0) {
         setMoveQuality(null);
         setEvalLoss(null);
+        setExpectedPointLoss(null);
         return;
       }
 
@@ -821,6 +896,7 @@ function App() {
       if (cachedReview) {
         setMoveQuality(cachedReview.quality);
         setEvalLoss(cachedReview.evalLoss);
+        setExpectedPointLoss(cachedReview.expectedPointsLoss ?? null);
         return;
       }
 
@@ -833,60 +909,59 @@ function App() {
       try {
         setMoveQuality("Checking...");
         setEvalLoss(null);
+        setExpectedPointLoss(null);
 
         // Move reviews are capped to keep browser analysis responsive.
-        const depth = Math.min(analysisDepth, 16);
+        const depth = Math.min(analysisDepth, 20);
 
         // MultiPV gives the engine's top two alternatives from one root
         // search, so “Great/Brilliant” can be based on a real score gap.
         const before = await analyzeFenOnce(previousFen, depth, null, 2);
         if (cancelled) return;
-        // Force the played move from the same root position. Comparing two
-        // searches from that identical position is fairer than comparing
-        // separate positions with different sides to move and search trees.
-        const played = await analyzeFenOnce(previousFen, depth, playedMove);
+        // Evaluate the actual resulting position with the opponent to move.
+        const played = await analyzeFenOnce(currentFen, depth, null, 1);
         if (cancelled) return;
 
-        if (!before.score || !played.score) {
+        if (!before.score) {
           setMoveQuality(null);
           return;
         }
 
         const beforeWhite = scoreToWhiteCentipawns(before.score, previousFen);
-        const playedWhite = scoreToWhiteCentipawns(played.score, previousFen);
         const playerToMove = previousFen.split(" ")[1];
+        const bestExpectedPoints = scoreToExpectedPoints(before.score, previousFen);
+        const playedPosition = new Chess(currentFen);
+        let playedWhite;
+        let playedExpectedPoints;
+        if (played.score) {
+          playedWhite = scoreToWhiteCentipawns(played.score, currentFen);
+          playedExpectedPoints = 1 - scoreToExpectedPoints(played.score, currentFen);
+        } else if (playedPosition.isCheckmate()) {
+          playedWhite = playerToMove === "w" ? 100000 : -100000;
+          playedExpectedPoints = 1;
+        } else if (playedPosition.isDraw()) {
+          playedWhite = 0;
+          playedExpectedPoints = 0.5;
+        } else {
+          throw new Error("Engine did not return a played-position score");
+        }
+        const expectedPointsLoss = Math.max(0, bestExpectedPoints - playedExpectedPoints);
+        const normalizedLoss = Math.max(0, playerToMove === "w" ? beforeWhite - playedWhite : playedWhite - beforeWhite);
         const secondBestScore = before.depths?.[2] === before.depths?.[1]
           ? before.alternatives?.[2]
           : null;
-        const secondBestWhite = secondBestScore
-          ? scoreToWhiteCentipawns(secondBestScore, previousFen)
-          : null;
-        const secondBestLoss = secondBestWhite === null
-          ? 0
-          : Math.max(
-              0,
-              playerToMove === "w"
-                ? beforeWhite - secondBestWhite
-                : secondBestWhite - beforeWhite
-            );
-
-        const rawLoss =
-          playerToMove === "w"
-            ? beforeWhite - playedWhite
-            : playedWhite - beforeWhite;
-
-        // Small negative values are search noise or a horizon effect; do not
-        // award a better label than the engine's top move for them.
-        const normalizedLoss = Math.max(0, rawLoss);
+        const secondExpectedPoints = secondBestScore ? scoreToExpectedPoints(secondBestScore, previousFen) : null;
+        const secondBestExpectedPointsLoss = secondExpectedPoints === null ? 0 : Math.max(0, bestExpectedPoints - secondExpectedPoints);
         const playedBestMove = before.bestMove === playedMove;
-        const baseQuality = playedBestMove
-          ? "Best"
-          : classifyEvalLoss(normalizedLoss);
+        let finalQuality = classifyExpectedPointsLoss(expectedPointsLoss, playedBestMove);
+        const sanPrefix = moveHistory.slice(0, reviewIndex + 1);
+        const isBook = OPENING_BOOK_LINES.some((line) => sanPrefix.every((san, prefixIndex) => line[prefixIndex] === san));
 
         const brilliant = isBrilliantMove({
           playedBestMove,
-          evalLoss: normalizedLoss,
-          secondBestLoss,
+          expectedPointsLoss,
+          bestExpectedPoints,
+          playedExpectedPoints,
           previousFen,
           playedMove,
         });
@@ -894,16 +969,18 @@ function App() {
         const great = isGreatMove({
           brilliant,
           playedBestMove,
-          secondBestLoss,
+          secondBestExpectedPointsLoss,
+          bestExpectedPoints,
         });
 
-        const finalQuality = brilliant
-          ? "Brilliant"
-          : great
-          ? "Great"
-          : baseQuality;
+        if (isBook) finalQuality = "Book";
+        else if (brilliant) finalQuality = "Brilliant";
+        else if (great) finalQuality = "Great";
+        const previousOpportunity = moveReviews[reviewIndex - 1];
+        if (!isBook && previousOpportunity?.expectedPointsLoss >= 0.05 && bestExpectedPoints >= 0.75 && playedExpectedPoints <= 0.5 && expectedPointsLoss >= 0.1) finalQuality = "Miss";
 
         setEvalLoss(normalizedLoss);
+        setExpectedPointLoss(expectedPointsLoss);
         setMoveQuality(finalQuality);
 
         setMoveReviews((reviews) => ({
@@ -911,6 +988,8 @@ function App() {
           [reviewIndex]: {
             quality: finalQuality,
             evalLoss: normalizedLoss,
+            expectedPointsLoss,
+            bestMove: before.bestMove,
           },
         }));
       } catch (error) {
@@ -1037,6 +1116,7 @@ function App() {
               <div className="fact-card"><span>Evaluation</span><strong>{formatEvaluation(evaluation)}</strong></div>
               <div className="fact-card"><span>Side to move</span><strong>{getSideToMove()}</strong></div>
               <div className="fact-card"><span>Eval loss</span><strong>{evalLoss === null ? "—" : `${(evalLoss / 100).toFixed(2)} pawns`}</strong></div>
+              <div className="fact-card"><span>Expected points lost</span><strong>{expectedPointLoss === null ? "—" : expectedPointLoss.toFixed(2)}</strong></div>
               <div className="fact-card"><span>Search depth</span><strong>{engineDepth || "—"}</strong></div>
             </div>
 
@@ -1054,8 +1134,7 @@ function App() {
                 <option value={8}>Fast · 8</option>
                 <option value={12}>Normal · 12</option>
                 <option value={16}>Deep · 16</option>
-                <option value={20}>Very deep · 20</option>
-                <option value={30}>Maximum · 30</option>
+                <option value={20}>Very deep · 20 (slower)</option>
               </select>
             </label>
 
@@ -1091,13 +1170,14 @@ function App() {
             {fullReview ? (
               <>
                 <div className="accuracy-grid">
-                  <div className="accuracy-card white-accuracy"><span>White · {ACCURACY_LABEL}</span><strong>{fullReview.whiteAccuracy}<small>%</small></strong><div className="accuracy-meter" role="progressbar" aria-label="White estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.whiteAccuracy}><i style={{ width: `${fullReview.whiteAccuracy}%` }} /></div></div>
-                  <div className="accuracy-card black-accuracy"><span>Black · {ACCURACY_LABEL}</span><strong>{fullReview.blackAccuracy}<small>%</small></strong><div className="accuracy-meter black-meter" role="progressbar" aria-label="Black estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.blackAccuracy}><i style={{ width: `${fullReview.blackAccuracy}%` }} /></div></div>
+                  <div className="accuracy-card white-accuracy"><span>White · {ACCURACY_LABEL}</span><strong>{fullReview.whiteAccuracy ?? "—"}{fullReview.whiteAccuracy !== null && <small>%</small>}</strong><div className="accuracy-meter" role="progressbar" aria-label="White estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.whiteAccuracy ?? 0}><i style={{ width: `${fullReview.whiteAccuracy ?? 0}%` }} /></div></div>
+                  <div className="accuracy-card black-accuracy"><span>Black · {ACCURACY_LABEL}</span><strong>{fullReview.blackAccuracy ?? "—"}{fullReview.blackAccuracy !== null && <small>%</small>}</strong><div className="accuracy-meter black-meter" role="progressbar" aria-label="Black estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.blackAccuracy ?? 0}><i style={{ width: `${fullReview.blackAccuracy ?? 0}%` }} /></div></div>
                 </div>
-                <p className="accuracy-note">App estimate based on Stockfish move loss; not Chess.com’s proprietary accuracy score.</p>
+                <p className="accuracy-note">Position-sensitive estimate using Stockfish evaluations and the published Lichess game-accuracy method. Chess.com’s CAPS2 formula is private.</p>
                 <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
                 <div className="review-section-heading"><h3>Move breakdown</h3><span>{fullReview.moves.length} analyzed</span></div>
+                <p className="classification-note">Standard labels use expected-points-loss bands published by Chess.com. Special labels use engine-based app rules.</p>
                 <div className="quality-counts">
                   {moveQualityCounts.map(({ quality, count }) => <span className="quality-count" key={quality}><QualityIcon quality={quality} size={18} />{quality}<b>{count}</b></span>)}
                 </div>
@@ -1108,7 +1188,7 @@ function App() {
                       <div className="moment-row" key={moment.index}>
                         <button className="moment-item" onClick={() => jumpToMove(moment.index + 1)}>
                           <QualityIcon quality={moment.quality} size={23} />
-                          <span><b>{moment.color === "w" ? "White" : "Black"} · {Math.floor(moment.index / 2) + 1}{moment.color === "w" ? "." : "..."} {moveHistory[moment.index]}</b><small>{moment.quality} · {moment.evalLoss ? `${(moment.evalLoss / 100).toFixed(2)} pawn loss` : "Turning point"}</small></span>
+                          <span><b>{moment.color === "w" ? "White" : "Black"} · {Math.floor(moment.index / 2) + 1}{moment.color === "w" ? "." : "..."} {moveHistory[moment.index]}</b><small>{moment.quality} · {(moment.expectedPointsLoss * 100).toFixed(0)} expected-point loss</small></span>
                           <span className="moment-arrow">→</span>
                         </button>
                         {["Inaccuracy", "Mistake", "Miss", "Blunder"].includes(moment.quality) && <button className="retry-link" onClick={() => retryMistake(moment.index)}>Retry</button>}

@@ -361,6 +361,7 @@ body { min-width: 320px; background: #f3f5f2; }
 .white-accuracy { border-top: 3px solid #d7b445; }
 .black-accuracy { border-top: 3px solid #34483d; }
 .accuracy-note { margin: 8px 1px 14px; color: #899289; font-size: 9px; line-height: 1.45; }
+.classification-note { margin: -3px 0 8px; color: #899289; font-size: 9px; line-height: 1.45; }
 .review-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 14px 0 8px; }
 .review-section-heading h3 { margin: 0; color: #344339; font-size: 12px; font-weight: 760; }
 .review-section-heading > span { color: #8a938b; font-size: 9px; }
