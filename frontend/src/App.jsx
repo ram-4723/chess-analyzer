@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
+import "./App.css";
 
 const START_FEN = new Chess().fen();
 const STOCKFISH_PATH = "/stockfish/stockfish-nnue-16-single.js";
@@ -775,190 +776,170 @@ function App() {
     () => ({
       position: fen,
       boardStyle: {
-        width: "500px",
-        height: "500px",
+        width: "100%",
+        height: "100%",
       },
     }),
     [fen]
   );
 
   return (
-    <div style={{ padding: "30px", fontFamily: "Arial" }}>
-      <h1>Chess Analyzer</h1>
-
-      <input
-        type="text"
-        placeholder="Enter username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        style={{
-          padding: "10px",
-          width: "250px",
-          marginRight: "10px",
-        }}
-      />
-
-      <button onClick={fetchGames}>Get Games</button>
-
-      <div
-        style={{
-          marginTop: "30px",
-          width: "500px",
-          height: "500px",
-          position: "relative",
-        }}
-      >
-        <Chessboard options={chessboardOptions} />
-        {getCurrentMoveIconOverlay()}
-      </div>
-
-      <div
-        style={{
-          marginTop: "15px",
-          width: "470px",
-          border: "1px solid gray",
-          padding: "15px",
-          backgroundColor: "#f7f7f7",
-        }}
-      >
-        <h3 style={{ marginTop: 0 }}>Stockfish Analysis</h3>
-
-        <p>
-          <strong>Status:</strong> {engineStatus}
-        </p>
-
-        <div style={{ marginBottom: "12px" }}>
-          <label>
-            <strong>Analysis Depth:</strong>{" "}
-            <select
-              value={analysisDepth}
-              onChange={(e) => {
-                setMoveReviews({});
-                setAnalysisDepth(Number(e.target.value));
-              }}
-            >
-              <option value={8}>Fast - 8</option>
-              <option value={12}>Normal - 12</option>
-              <option value={16}>Deep - 16</option>
-              <option value={20}>Very Deep - 20</option>
-              <option value={30}>Maximum - 30</option>
-            </select>
-          </label>
-        </div>
-
-        <p>
-          <strong>Side to Move:</strong> {getSideToMove()}
-        </p>
-
-        <p>
-          <strong>Evaluation:</strong> {formatEvaluation(evaluation)}
-        </p>
-
-        <p>
-          <strong>Last Game Move:</strong> {getCurrentGameMove()}
-        </p>
-
-        <p>
-          <strong>Move Quality:</strong> {moveQuality || "-"}
-        </p>
-
-        <p>
-          <strong>Eval Loss:</strong>{" "}
-          {evalLoss === null ? "-" : (evalLoss / 100).toFixed(2)}
-        </p>
-
-        <p>
-          <strong>Best Move Now:</strong> {getBestMoveSan(bestMove)}
-        </p>
-
-        <p>
-          <strong>Best Line:</strong> {getBestLineSan()}
-        </p>
-
-        <p>
-          <strong>Depth:</strong> {engineDepth || "-"}
-        </p>
-      </div>
-
-      <div style={{ marginTop: "20px" }}>
-        <button onClick={previousMove} disabled={currentMove === 0}>
-          Previous
-        </button>
-
-        <button
-          onClick={nextMove}
-          disabled={currentMove === fenHistory.length - 1}
-          style={{ marginLeft: "10px" }}
-        >
-          Next
-        </button>
-
-        <span style={{ marginLeft: "15px" }}>
-          Move {currentMove} / {fenHistory.length - 1}
-        </span>
-      </div>
-
-      <div
-        style={{
-          marginTop: "30px",
-          maxWidth: "500px",
-          border: "1px solid gray",
-          padding: "15px",
-        }}
-      >
-        <h3>Moves</h3>
-
-        {moveHistory.map((move, index) => {
-          const review = moveReviews[index];
-
-          return (
-            <span
-              key={index}
-              onClick={() => jumpToMove(index + 1)}
-              style={{
-                marginRight: "12px",
-                cursor: "pointer",
-                color: currentMove === index + 1 ? "red" : "black",
-                fontWeight: currentMove === index + 1 ? "bold" : "normal",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                marginBottom: "8px",
-              }}
-            >
-              {index % 2 === 0 ? `${Math.floor(index / 2) + 1}. ` : ""}
-
-              {review && <QualityIcon quality={review.quality} size={18} />}
-
-              {move}
-            </span>
-          );
-        })}
-      </div>
-
-      <div style={{ marginTop: "30px" }}>
-        {games.map((game, index) => (
-          <div
-            key={game.url || index}
-            style={{
-              border: "1px solid gray",
-              padding: "15px",
-              marginBottom: "15px",
-              cursor: "pointer",
-            }}
-            onClick={() => {
-              if (game.pgn) {
-                loadGame(game.pgn);
-              }
-            }}
-          >
-            <p>White: {game.white?.username}</p>
-            <p>Black: {game.black?.username}</p>
-            <p>Time Class: {game.time_class}</p>
-            <p>Click to load game</p>
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="app-brand">
+          <span className="brand-knight" aria-hidden="true">♞</span>
+          <div>
+            <p className="eyebrow">GAME REVIEW</p>
+            <h1>Chess Analyzer</h1>
           </div>
-        ))}
-      </div>
+        </div>
+        <form
+          className="player-search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            fetchGames();
+          }}
+        >
+          <label htmlFor="chess-username">Chess.com username</label>
+          <div className="search-controls">
+            <input
+              id="chess-username"
+              type="text"
+              placeholder="Enter username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+            <button className="primary-button" type="submit">Get games</button>
+          </div>
+        </form>
+      </header>
+
+      <main className="review-layout">
+        <section className="board-column" aria-label="Game board and navigation">
+          <div className="board-card">
+            <div className="board-heading">
+              <div>
+                <p className="eyebrow">CURRENT POSITION</p>
+                <h2>{getCurrentGameMove()}</h2>
+              </div>
+              <span className={`engine-pill ${engineReady ? "is-ready" : ""}`}>
+                <span className="status-dot" /> {engineStatus}
+              </span>
+            </div>
+            <div className="board-frame">
+              <Chessboard options={chessboardOptions} />
+              {getCurrentMoveIconOverlay()}
+            </div>
+            <div className="board-navigation">
+              <button onClick={previousMove} disabled={currentMove === 0} aria-label="Previous move">← Previous</button>
+              <span>Move <strong>{currentMove}</strong> / {fenHistory.length - 1}</span>
+              <button onClick={nextMove} disabled={currentMove === fenHistory.length - 1} aria-label="Next move">Next →</button>
+            </div>
+          </div>
+        </section>
+
+        <aside className="results-column" aria-label="Game analysis and results">
+          <section className="panel analysis-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">STOCKFISH</p>
+                <h2>Move review</h2>
+              </div>
+              {moveQuality && moveQuality !== "Checking..." && (
+                <div className="quality-badge">
+                  <QualityIcon quality={moveQuality} size={28} />
+                  <strong>{moveQuality}</strong>
+                </div>
+              )}
+            </div>
+
+            <div className="analysis-facts">
+              <div className="fact-card"><span>Evaluation</span><strong>{formatEvaluation(evaluation)}</strong></div>
+              <div className="fact-card"><span>Side to move</span><strong>{getSideToMove()}</strong></div>
+              <div className="fact-card"><span>Eval loss</span><strong>{evalLoss === null ? "—" : `${(evalLoss / 100).toFixed(2)} pawns`}</strong></div>
+              <div className="fact-card"><span>Search depth</span><strong>{engineDepth || "—"}</strong></div>
+            </div>
+
+            <label className="depth-control">
+              <span>Analysis depth</span>
+              <select
+                value={analysisDepth}
+                onChange={(event) => {
+                  setMoveReviews({});
+                  setAnalysisDepth(Number(event.target.value));
+                }}
+              >
+                <option value={8}>Fast · 8</option>
+                <option value={12}>Normal · 12</option>
+                <option value={16}>Deep · 16</option>
+                <option value={20}>Very deep · 20</option>
+                <option value={30}>Maximum · 30</option>
+              </select>
+            </label>
+
+            <div className="recommendation-list">
+              <div><span>Best move</span><strong>{getBestMoveSan(bestMove)}</strong></div>
+              <div><span>Best line</span><strong className="best-line">{getBestLineSan()}</strong></div>
+            </div>
+          </section>
+
+          <section className="panel moves-panel">
+            <div className="panel-heading compact-heading">
+              <div><p className="eyebrow">GAME SCORE</p><h2>Moves</h2></div>
+              <span className="subtle-count">{moveHistory.length} plies</span>
+            </div>
+            {moveHistory.length ? (
+              <div className="move-list">
+                {moveHistory.map((move, index) => {
+                  const review = moveReviews[index];
+                  const selected = currentMove === index + 1;
+                  return (
+                    <button
+                      className={`move-item ${selected ? "is-selected" : ""}`}
+                      key={`${index}-${move}`}
+                      onClick={() => jumpToMove(index + 1)}
+                      aria-current={selected ? "step" : undefined}
+                    >
+                      <span className="move-number">{index % 2 === 0 ? `${Math.floor(index / 2) + 1}.` : ""}</span>
+                      <span>{move}</span>
+                      {review && <QualityIcon quality={review.quality} size={19} />}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="empty-state">Load one of your recent games to review its moves.</p>
+            )}
+          </section>
+
+          <section className="panel games-panel">
+            <div className="panel-heading compact-heading">
+              <div><p className="eyebrow">CHESS.COM</p><h2>Recent games</h2></div>
+              <span className="subtle-count">{games.length}</span>
+            </div>
+            {games.length ? (
+              <div className="game-list">
+                {games.map((game, index) => (
+                  <button
+                    className="game-item"
+                    key={game.url || index}
+                    onClick={() => game.pgn && loadGame(game.pgn)}
+                  >
+                    <span className="game-matchup">
+                      <strong>{game.white?.username || "White"}</strong>
+                      <span>vs</span>
+                      <strong>{game.black?.username || "Black"}</strong>
+                    </span>
+                    <span className="game-meta">{game.time_class || "Game"} · Open review →</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-state">Search a Chess.com username to load the latest games.</p>
+            )}
+          </section>
+        </aside>
+      </main>
     </div>
   );
 }
