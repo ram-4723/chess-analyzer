@@ -32,7 +32,7 @@ const QUALITY_STYLES = {
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
 const CAPTURED_PIECE_ICONS = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛" };
 
-const ACCURACY_LABEL = "Engine top-move match";
+const ACCURACY_LABEL = "Engine top-three match";
 const WIN_PERCENT_SLOPE = 0.00368208;
 // A small transparent opening book for common first moves. Unmatched moves
 // are scored normally; this avoids calling arbitrary early moves “book”.
@@ -104,10 +104,10 @@ function AccuracyCard({ side, accuracy }) {
   return (
     <div className={`accuracy-card ${colorClass}`}>
       <span>{side} · {ACCURACY_LABEL}</span>
-      <div className="accuracy-ring" role="progressbar" aria-label={`${side} exact engine top-move rate`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0} style={{ "--ring-value": `${percentage ?? 0}%` }}>
+      <div className="accuracy-ring" role="progressbar" aria-label={`${side} engine top-three match rate`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0} style={{ "--ring-value": `${percentage ?? 0}%` }}>
         <strong>{percentage ?? "—"}{percentage !== null && <small>%</small>}</strong>
       </div>
-      <small className="accuracy-detail">{accuracy ? `${accuracy.bestMatches} of ${accuracy.total} moves matched` : "No moves to score"}</small>
+      <small className="accuracy-detail">{accuracy ? `${accuracy.topThreeMatches} of ${accuracy.total} moves matched the engine top 3` : "No moves to score"}</small>
     </div>
   );
 }
@@ -596,8 +596,8 @@ function App() {
   const calculateMoveAccuracy = (reviews, color) => {
     const sideReviews = reviews.filter((review) => review.color === color);
     if (!sideReviews.length) return null;
-    const bestMatches = sideReviews.filter((review) => review.bestMove && review.playedMove === review.bestMove).length;
-    return { percentage: Math.round((bestMatches / sideReviews.length) * 100), bestMatches, total: sideReviews.length };
+    const topThreeMatches = sideReviews.filter((review) => review.topMoves?.includes(review.playedMove)).length;
+    return { percentage: Math.round((topThreeMatches / sideReviews.length) * 100), topThreeMatches, total: sideReviews.length };
   };
 
   const materialBalanceFor = (chess, color) => chess.board().flat().reduce((balance, piece) => {
@@ -692,6 +692,7 @@ function App() {
       const worker = new Worker(STOCKFISH_PATH);
 
       const scoresByLine = {};
+      const movesByDepth = {};
       let latestBestMove = null;
       let finished = false;
 
@@ -757,8 +758,12 @@ function App() {
 
           if (score && lineDepth >= (scoresByLine[lineNumber]?.depth || 0)) {
             scoresByLine[lineNumber] = { depth: lineDepth, score };
+            if (pvMatch) {
+              movesByDepth[lineDepth] ||= {};
+              movesByDepth[lineDepth][lineNumber] = pvMatch[1];
+            }
+            if (lineNumber === 1 && pvMatch) latestBestMove = pvMatch[1];
           }
-          if (lineNumber === 1 && pvMatch) latestBestMove = pvMatch[1];
           return;
         }
 
@@ -769,6 +774,10 @@ function App() {
 
           finish({
             score: scoresByLine[1]?.score || null,
+            topMoves: (() => {
+              const deepestCompleteLines = Object.keys(movesByDepth).map(Number).sort((a, b) => b - a).map((lineDepth) => movesByDepth[lineDepth]).find((lines) => [1, 2, 3].every((lineNumber) => lines[lineNumber]));
+              return deepestCompleteLines ? [1, 2, 3].map((lineNumber) => deepestCompleteLines[lineNumber]) : [];
+            })(),
             alternatives: Object.fromEntries(
               Object.entries(scoresByLine).map(([lineNumber, lineInfo]) => [
                 lineNumber,
@@ -811,7 +820,7 @@ function App() {
         const beforeFen = fenHistory[index];
         const afterFen = fenHistory[index + 1];
         const playedMove = uciMoveHistory[index];
-        const before = await analyzeFenOnce(beforeFen, Math.min(analysisDepth, 20), null, 2);
+        const before = await analyzeFenOnce(beforeFen, Math.min(analysisDepth, 20), null, 3);
         if (reviewRunRef.current !== runId) return;
         const after = await analyzeFenOnce(afterFen, Math.min(analysisDepth, 20), null, 1);
         if (reviewRunRef.current !== runId) return;
@@ -853,7 +862,7 @@ function App() {
         else if (brilliant) quality = "Brilliant";
         else if (great) quality = "Great";
         else if (cpLoss >= 300 && playedExpectedPoints >= 0.5) quality = "Miss";
-        const review = { index, color: mover, quality, evalLoss: cpLoss, expectedPointsLoss, bestMove: before.bestMove, playedMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
+        const review = { index, color: mover, quality, evalLoss: cpLoss, expectedPointsLoss, bestMove: before.bestMove, topMoves: before.topMoves || [before.bestMove].filter(Boolean), playedMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
         results.push(review);
         positions.push(playedWhite);
         setMoveReviews((existing) => ({ ...existing, [index]: review }));
@@ -1426,7 +1435,7 @@ function App() {
                   <AccuracyCard side="White" accuracy={fullReview.whiteAccuracy} />
                   <AccuracyCard side="Black" accuracy={fullReview.blackAccuracy} />
                 </div>
-                <p className="accuracy-note">Calculation: exact moves matching Stockfish’s top choice ÷ all moves played × 100. Near-best moves are still good moves, but they do not count as exact top-move matches.</p>
+                <p className="accuracy-note">Calculation: top-three engine matches ÷ all moves played × 100. A move counts when it appears in the engine's three principal variations.</p>
                 <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
                 <details className="report-details">
