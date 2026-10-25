@@ -1,0 +1,4 @@
+Opening lines derived from lichess-org/chess-openings.
+Source: https://github.com/lichess-org/chess-openings
+License: CC0 1.0 Universal (public domain dedication).
+The generated JSON stores positions reached by the opening lines as FEN keys.

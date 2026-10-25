@@ -34,16 +34,21 @@ const CAPTURED_PIECE_ICONS = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛" 
 
 const ACCURACY_LABEL = "Top-3 eval-safe match";
 const WIN_PERCENT_SLOPE = 0.00368208;
-// A small transparent opening book for common first moves. Unmatched moves
-// are scored normally; this avoids calling arbitrary early moves “book”.
-const OPENING_BOOK_LINES = [
-  ["e4", "e5", "Nf3", "Nc6", "Bb5"], ["e4", "e5", "Nf3", "Nc6", "Bc4"],
-  ["e4", "e5", "Nf3", "Nf6"], ["e4", "c5"], ["e4", "e6"], ["e4", "c6"],
-  ["e4", "d5"], ["e4", "d6"], ["e4", "g6"], ["d4", "d5", "c4"],
-  ["d4", "Nf6", "c4", "g6"], ["d4", "Nf6", "c4", "e6"],
-  ["d4", "Nf6", "Nf3", "g6"], ["d4", "d5", "Bf4"], ["c4", "e5"],
-  ["Nf3", "d5"], ["Nf3", "Nf6"],
-];
+let openingBookPositionsPromise;
+const isOpeningBookPosition = async (fen) => {
+  openingBookPositionsPromise ||= fetch(`${import.meta.env.BASE_URL}opening-positions.json`)
+    .then((response) => {
+      if (!response.ok) throw new Error("Opening book data could not be loaded");
+      return response.json();
+    })
+    .then((positions) => new Set(positions))
+    .catch((error) => {
+      console.warn("Opening book labels are unavailable:", error);
+      return new Set();
+    });
+  const positions = await openingBookPositionsPromise;
+  return positions.has(String(fen).split(" ").slice(0, 4).join(" "));
+};
 
 function EvaluationGraph({ points, currentMove, onSelectMove }) {
   if (!points?.length) {
@@ -568,15 +573,17 @@ function App() {
   };
 
   const scoreToExpectedPoints = (score, fenToScore) => {
-    // Stockfish WDL is position/material-aware and is reported from the side
-    // to move's perspective. It is a better grading input than raw centipawns.
-    if (score?.wdl) {
+    // Stockfish UCI WDL is from the side-to-move perspective and is
+    // material-aware, so use it directly when the engine provides valid data.
+    if (Array.isArray(score?.wdl) && score.wdl.length === 3) {
       const [wins, draws, losses] = score.wdl;
       const total = wins + draws + losses;
-      if (total > 0) return (wins + draws / 2) / total;
+      if ([wins, draws, losses].every((value) => Number.isFinite(value) && value >= 0) && total > 0) {
+        return (wins + draws / 2) / total;
+      }
     }
 
-    // Fallback for engine builds that don't implement UCI_ShowWDL.
+    // Fallback for engine builds without UCI_ShowWDL.
     const whiteCp = scoreToWhiteCentipawns(score, fenToScore);
     const moverCp = fenToScore.split(" ")[1] === "w" ? whiteCp : -whiteCp;
     const boundedCp = Math.max(-3000, Math.min(3000, moverCp));
@@ -584,9 +591,8 @@ function App() {
   };
 
   const classifyExpectedPointsLoss = (loss, playedBestMove) => {
-    // Chess.com publicly documents these Expected Points V2 bands.
-    // WDL is rounded, so only Stockfish's actual top move earns “Best”.
     if (playedBestMove) return "Best";
+    if (!Number.isFinite(loss)) return "Blunder";
     if (loss < 0.02) return "Excellent";
     if (loss < 0.05) return "Good";
     if (loss < 0.10) return "Inaccuracy";
@@ -678,20 +684,108 @@ function App() {
     centipawnLoss,
     previousFen,
     playedMove,
+    bestExpectedPoints,
+    playedExpectedPoints,
   }) => {
     const sacrifice = findMaterialSacrifice(previousFen, playedMove);
     const isBestOrNearBest = playedBestMove || (expectedPointsLoss <= 0.01 && centipawnLoss <= 35);
-    return Boolean(isBestOrNearBest && sacrifice);
+    return Boolean(
+      isBestOrNearBest &&
+      sacrifice &&
+      playedExpectedPoints >= 0.5 &&
+      bestExpectedPoints < 0.95
+    );
   };
 
-  const isGreatMove = ({
-    brilliant,
-    playedBestMove,
-    secondBestExpectedPointsLoss,
-    bestExpectedPoints,
+  const isGreatMove = ({ brilliant, playedBestMove, secondBestExpectedPointsLoss }) => (
+    !brilliant && playedBestMove && secondBestExpectedPointsLoss >= 0.15
+  );
+
+  const classifyMoveReview = async ({
+    index,
+    previousFen,
+    currentFen,
+    playedMove,
+    before,
+    after,
+    previousOpponentQuality = null,
   }) => {
-    // Approximate Chess.com's “critical turning point / only good move” rule.
-    return !brilliant && playedBestMove && secondBestExpectedPointsLoss >= 0.15 && bestExpectedPoints > 0.25 && bestExpectedPoints < 0.95;
+    if (!before?.score) throw new Error("Engine did not return a best-position score");
+
+    const mover = previousFen.split(" ")[1];
+    const beforeWhite = scoreToWhiteCentipawns(before.score, previousFen);
+    const bestExpectedPoints = scoreToExpectedPoints(before.score, previousFen);
+    const currentPosition = new Chess(currentFen);
+    let playedWhite;
+    let playedExpectedPoints;
+
+    if (after?.score) {
+      playedWhite = scoreToWhiteCentipawns(after.score, currentFen);
+      playedExpectedPoints = 1 - scoreToExpectedPoints(after.score, currentFen);
+    } else if (currentPosition.isCheckmate()) {
+      playedWhite = mover === "w" ? 100000 : -100000;
+      playedExpectedPoints = 1;
+    } else if (currentPosition.isDraw()) {
+      playedWhite = 0;
+      playedExpectedPoints = 0.5;
+    } else {
+      throw new Error("Engine did not return a played-position score");
+    }
+
+    const expectedPointsLoss = Math.max(0, bestExpectedPoints - playedExpectedPoints);
+    const evalLoss = Math.max(0, mover === "w" ? beforeWhite - playedWhite : playedWhite - beforeWhite);
+    const bestMove = before.bestMove || before.topMoves?.[0] || null;
+    const topMoves = before.topMoves?.length ? before.topMoves : [bestMove].filter(Boolean);
+    const playedBestMove = bestMove === playedMove;
+    const secondBestScore = before.depths?.[2] === before.depths?.[1]
+      ? before.alternatives?.[2]
+      : null;
+    const secondExpectedPoints = secondBestScore
+      ? scoreToExpectedPoints(secondBestScore, previousFen)
+      : null;
+    const secondBestExpectedPointsLoss = secondExpectedPoints === null
+      ? 0
+      : Math.max(0, bestExpectedPoints - secondExpectedPoints);
+
+    const brilliant = isBrilliantMove({
+      playedBestMove,
+      expectedPointsLoss,
+      centipawnLoss: evalLoss,
+      previousFen,
+      playedMove,
+      bestExpectedPoints,
+      playedExpectedPoints,
+    });
+    const great = isGreatMove({ brilliant, playedBestMove, secondBestExpectedPointsLoss });
+    const forced = new Chess(previousFen).moves().length === 1;
+    const book = await isOpeningBookPosition(currentFen);
+    const opponentMadeError = ["Inaccuracy", "Mistake", "Blunder"].includes(previousOpponentQuality);
+    const missCandidate = bestExpectedPoints >= 0.7 &&
+      playedExpectedPoints >= 0.5 &&
+      playedExpectedPoints < 0.7 &&
+      expectedPointsLoss >= 0.1;
+
+    let quality = classifyExpectedPointsLoss(expectedPointsLoss, playedBestMove);
+    if (forced) quality = "Forced";
+    else if (book) quality = "Book";
+    else if (brilliant) quality = "Brilliant";
+    else if (great) quality = "Great";
+    else if (opponentMadeError && missCandidate) quality = "Miss";
+
+    return {
+      index,
+      color: mover,
+      quality,
+      evalLoss,
+      expectedPointsLoss,
+      bestMove,
+      topMoves,
+      playedMove,
+      bestLine: bestMove,
+      bestWhite: beforeWhite,
+      playedWhite,
+      missCandidate,
+    };
   };
 
   const analyzeFenOnce = (fenToAnalyze, depth, forcedMove = null, multiPv = 1) => {
@@ -700,6 +794,7 @@ function App() {
 
       const scoresByLine = {};
       const movesByDepth = {};
+      const requestedTopMoveCount = Math.max(1, Math.min(multiPv, new Chess(fenToAnalyze).moves().length));
       let latestBestMove = null;
       let finished = false;
 
@@ -747,6 +842,7 @@ function App() {
           const wdlMatch = line.match(/\bwdl\s+(\d+)\s+(\d+)\s+(\d+)/i);
           const pvMatch = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
           const wdl = wdlMatch ? wdlMatch.slice(1).map(Number) : null;
+          const isBound = /\b(?:lowerbound|upperbound)\b/.test(line);
 
           let score = null;
           if (mateMatch) {
@@ -763,7 +859,7 @@ function App() {
             };
           }
 
-          if (score && lineDepth >= (scoresByLine[lineNumber]?.depth || 0)) {
+          if (score && !isBound && lineDepth >= (scoresByLine[lineNumber]?.depth || 0)) {
             scoresByLine[lineNumber] = { depth: lineDepth, score };
             if (pvMatch) {
               movesByDepth[lineDepth] ||= {};
@@ -776,15 +872,21 @@ function App() {
 
         if (line.startsWith("bestmove")) {
           clearTimeout(timeout);
+          const requiredLineNumbers = Array.from({ length: requestedTopMoveCount }, (_, index) => index + 1);
+          const deepestCompleteLines = Object.keys(movesByDepth)
+            .map(Number)
+            .sort((a, b) => b - a)
+            .map((lineDepth) => movesByDepth[lineDepth])
+            .find((lines) => requiredLineNumbers.every((lineNumber) => lines[lineNumber]));
+          const topMoves = deepestCompleteLines
+            ? requiredLineNumbers.map((lineNumber) => deepestCompleteLines[lineNumber])
+            : [];
 
           const move = line.split(" ")[1];
 
           finish({
             score: scoresByLine[1]?.score || null,
-            topMoves: (() => {
-              const deepestCompleteLines = Object.keys(movesByDepth).map(Number).sort((a, b) => b - a).map((lineDepth) => movesByDepth[lineDepth]).find((lines) => [1, 2, 3].every((lineNumber) => lines[lineNumber]));
-              return deepestCompleteLines ? [1, 2, 3].map((lineNumber) => deepestCompleteLines[lineNumber]) : [];
-            })(),
+            topMoves,
             alternatives: Object.fromEntries(
               Object.entries(scoresByLine).map(([lineNumber, lineInfo]) => [
                 lineNumber,
@@ -833,45 +935,18 @@ function App() {
         if (reviewRunRef.current !== runId) return;
         if (!before.score) throw new Error(`Engine did not return a best-position score for move ${index + 1}`);
 
-        const bestWhite = scoreToWhiteCentipawns(before.score, beforeFen);
-        if (index === 0) initialWhite = bestWhite;
-        const mover = beforeFen.split(" ")[1];
-        const afterPosition = new Chess(afterFen);
-        let playedWhite;
-        let playedExpectedPoints;
-        if (after.score) {
-          playedWhite = scoreToWhiteCentipawns(after.score, afterFen);
-          playedExpectedPoints = 1 - scoreToExpectedPoints(after.score, afterFen);
-        } else if (afterPosition.isCheckmate()) {
-          playedWhite = mover === "w" ? 100000 : -100000;
-          playedExpectedPoints = 1;
-        } else if (afterPosition.isDraw()) {
-          playedWhite = 0;
-          playedExpectedPoints = 0.5;
-        } else {
-          throw new Error(`Engine did not return a played-position score for move ${index + 1}`);
-        }
-        const bestExpectedPoints = scoreToExpectedPoints(before.score, beforeFen);
-        const expectedPointsLoss = Math.max(0, bestExpectedPoints - playedExpectedPoints);
-        const cpLoss = Math.max(0, mover === "w" ? bestWhite - playedWhite : playedWhite - bestWhite);
-        const bestPlayed = before.bestMove === playedMove;
-        const secondScore = before.depths?.[2] === before.depths?.[1] ? before.alternatives?.[2] : null;
-        const secondExpectedPoints = secondScore ? scoreToExpectedPoints(secondScore, beforeFen) : null;
-        const secondBestExpectedPointsLoss = secondExpectedPoints === null ? 0 : Math.max(0, bestExpectedPoints - secondExpectedPoints);
-        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, expectedPointsLoss, centipawnLoss: cpLoss, previousFen: beforeFen, playedMove });
-        const great = isGreatMove({ brilliant, playedBestMove: bestPlayed, secondBestExpectedPointsLoss, bestExpectedPoints });
-        const forced = new Chess(beforeFen).moves().length === 1;
-        let quality = brilliant ? "Brilliant" : great ? "Great" : classifyExpectedPointsLoss(expectedPointsLoss, bestPlayed);
-        const sanPrefix = moveHistory.slice(0, index + 1);
-        const isBook = OPENING_BOOK_LINES.some((line) => sanPrefix.every((san, prefixIndex) => line[prefixIndex] === san));
-        if (forced) quality = "Forced";
-        else if (isBook) quality = "Book";
-        else if (brilliant) quality = "Brilliant";
-        else if (great) quality = "Great";
-        else if (cpLoss >= 300 && playedExpectedPoints >= 0.5) quality = "Miss";
-        const review = { index, color: mover, quality, evalLoss: cpLoss, expectedPointsLoss, bestMove: before.bestMove, topMoves: before.topMoves || [before.bestMove].filter(Boolean), playedMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
+        const review = await classifyMoveReview({
+          index,
+          previousFen: beforeFen,
+          currentFen: afterFen,
+          playedMove,
+          before,
+          after,
+          previousOpponentQuality: results[index - 1]?.quality || null,
+        });
         results.push(review);
-        positions.push(playedWhite);
+        if (index === 0) initialWhite = review.bestWhite;
+        positions.push(review.playedWhite);
         setMoveReviews((existing) => ({ ...existing, [index]: review }));
         setReviewState({ status: "running", completed: index + 1, total: uciMoveHistory.length });
       }
@@ -1060,85 +1135,64 @@ function App() {
 
         // Move reviews are capped to keep browser analysis responsive.
         const depth = Math.min(analysisDepth, 20);
-
-        // MultiPV gives the engine's top two alternatives from one root
-        // search, so “Great/Brilliant” can be based on a real score gap.
-        const before = await analyzeFenOnce(previousFen, depth, null, 2);
+        const before = await analyzeFenOnce(previousFen, depth, null, 3);
         if (cancelled) return;
-        // Evaluate the actual resulting position with the opponent to move.
         const played = await analyzeFenOnce(currentFen, depth, null, 1);
         if (cancelled) return;
-
         if (!before.score) {
           setMoveQuality(null);
           return;
         }
 
-        const beforeWhite = scoreToWhiteCentipawns(before.score, previousFen);
-        const playerToMove = previousFen.split(" ")[1];
-        const bestExpectedPoints = scoreToExpectedPoints(before.score, previousFen);
-        const playedPosition = new Chess(currentFen);
-        let playedWhite;
-        let playedExpectedPoints;
-        if (played.score) {
-          playedWhite = scoreToWhiteCentipawns(played.score, currentFen);
-          playedExpectedPoints = 1 - scoreToExpectedPoints(played.score, currentFen);
-        } else if (playedPosition.isCheckmate()) {
-          playedWhite = playerToMove === "w" ? 100000 : -100000;
-          playedExpectedPoints = 1;
-        } else if (playedPosition.isDraw()) {
-          playedWhite = 0;
-          playedExpectedPoints = 0.5;
-        } else {
-          throw new Error("Engine did not return a played-position score");
-        }
-        const expectedPointsLoss = Math.max(0, bestExpectedPoints - playedExpectedPoints);
-        const normalizedLoss = Math.max(0, playerToMove === "w" ? beforeWhite - playedWhite : playedWhite - beforeWhite);
-        const secondBestScore = before.depths?.[2] === before.depths?.[1]
-          ? before.alternatives?.[2]
-          : null;
-        const secondExpectedPoints = secondBestScore ? scoreToExpectedPoints(secondBestScore, previousFen) : null;
-        const secondBestExpectedPointsLoss = secondExpectedPoints === null ? 0 : Math.max(0, bestExpectedPoints - secondExpectedPoints);
-        const playedBestMove = before.bestMove === playedMove;
-        let finalQuality = classifyExpectedPointsLoss(expectedPointsLoss, playedBestMove);
-        const sanPrefix = moveHistory.slice(0, reviewIndex + 1);
-        const isBook = OPENING_BOOK_LINES.some((line) => sanPrefix.every((san, prefixIndex) => line[prefixIndex] === san));
-
-        const brilliant = isBrilliantMove({
-          playedBestMove,
-          expectedPointsLoss,
-          centipawnLoss: normalizedLoss,
+        let previousOpponentQuality = moveReviews[reviewIndex - 1]?.quality || null;
+        let review = await classifyMoveReview({
+          index: reviewIndex,
           previousFen,
+          currentFen,
           playedMove,
+          before,
+          after: played,
+          previousOpponentQuality,
         });
 
-        const great = isGreatMove({
-          brilliant,
-          playedBestMove,
-          secondBestExpectedPointsLoss,
-          bestExpectedPoints,
-        });
+        if (review.missCandidate && !["Forced", "Book"].includes(review.quality) && reviewIndex > 0 && !previousOpponentQuality) {
+          const precedingFen = fenHistory[reviewIndex - 1];
+          const precedingMove = uciMoveHistory[reviewIndex - 1];
+          if (precedingFen && precedingMove) {
+            const precedingPosition = new Chess(precedingFen);
+            if (precedingPosition.moves().length === 1) {
+              previousOpponentQuality = "Forced";
+            } else if (await isOpeningBookPosition(previousFen)) {
+              previousOpponentQuality = "Book";
+            } else {
+              const precedingAnalysis = await analyzeFenOnce(precedingFen, depth, null, 3);
+              if (cancelled) return;
+              if (precedingAnalysis.score) {
+                const opponentBestPoints = scoreToExpectedPoints(precedingAnalysis.score, precedingFen);
+                const opponentActualPoints = 1 - scoreToExpectedPoints(before.score, previousFen);
+                const opponentPointsLoss = Math.max(0, opponentBestPoints - opponentActualPoints);
+                previousOpponentQuality = classifyExpectedPointsLoss(
+                  opponentPointsLoss,
+                  precedingAnalysis.bestMove === precedingMove
+                );
+              }
+            }
+            review = await classifyMoveReview({
+              index: reviewIndex,
+              previousFen,
+              currentFen,
+              playedMove,
+              before,
+              after: played,
+              previousOpponentQuality,
+            });
+          }
+        }
 
-        const forced = new Chess(previousFen).moves().length === 1;
-        if (forced) finalQuality = "Forced";
-        else if (isBook) finalQuality = "Book";
-        else if (brilliant) finalQuality = "Brilliant";
-        else if (great) finalQuality = "Great";
-        else if (normalizedLoss >= 300 && playedExpectedPoints >= 0.5) finalQuality = "Miss";
-
-        setEvalLoss(normalizedLoss);
-        setExpectedPointLoss(expectedPointsLoss);
-        setMoveQuality(finalQuality);
-
-        setMoveReviews((reviews) => ({
-          ...reviews,
-          [reviewIndex]: {
-            quality: finalQuality,
-            evalLoss: normalizedLoss,
-            expectedPointsLoss,
-            bestMove: before.bestMove,
-          },
-        }));
+        setEvalLoss(review.evalLoss);
+        setExpectedPointLoss(review.expectedPointsLoss);
+        setMoveQuality(review.quality);
+        setMoveReviews((reviews) => ({ ...reviews, [reviewIndex]: review }));
       } catch (error) {
         if (!cancelled) {
           console.error("Move review failed:", error);
@@ -1154,6 +1208,8 @@ function App() {
       // for an old selected move cannot overwrite the newly selected move.
       cancelled = true;
     };
+    // These helpers are pure; their changing identities must not restart engine jobs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMove, fenHistory, uciMoveHistory, analysisDepth, moveReviews]);
 
   const chessboardOptions = useMemo(
@@ -1447,7 +1503,7 @@ function App() {
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
                 <details className="report-details">
                   <summary>Move breakdown &amp; key moments <span>{fullReview.moves.length} moves · {fullReview.moments.length} moments</span></summary>
-                  <p className="classification-note">Standard labels use expected-points-loss bands published by Chess.com. Special labels use engine-based app rules.</p>
+                  <p className="classification-note">Standard labels use Chess.com’s published expected-points bands with Stockfish WDL as a proxy. Brilliant, Great, and Miss use explicit app rules; Book uses the Lichess ECO database.</p>
                   <div className="quality-counts">
                 {moveQualityCounts.map(({ quality, count }) => <span className="quality-count" key={quality}><QualityIcon quality={quality} size={22} />{quality}<b>{count}</b></span>)}
                   </div>
