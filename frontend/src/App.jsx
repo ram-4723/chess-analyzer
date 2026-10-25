@@ -603,22 +603,40 @@ function App() {
       const movedPieceValue = movedPiece ? PIECE_VALUES[movedPiece.type] || 0 : 0;
       if (movedPieceValue < 300) return null;
 
-      // A piece being attacked does not by itself make a sacrifice. Check that
-      // the opponent can legally take it, then account for any immediate
-      // recapture so routine exchanges and defended pieces do not qualify.
+      // Follow the complete legal exchange on the destination square. Looking
+      // only one recapture deep can miss a real sacrifice when the exchange
+      // continues and the tactical compensation appears later in the line.
+      const exchangeMemo = new Map();
+      const bestExchangeBalance = (position, targetSquare) => {
+        const key = `${position.fen()}|${targetSquare}|${mover}`;
+        if (exchangeMemo.has(key)) return exchangeMemo.get(key);
+        const standPat = materialBalanceFor(position, mover);
+        const captures = position.moves({ verbose: true }).filter((reply) => reply.to === targetSquare && reply.captured);
+        if (!captures.length) {
+          exchangeMemo.set(key, standPat);
+          return standPat;
+        }
+
+        const balances = captures.map((capture) => {
+          const next = new Chess(position.fen());
+          next.move({ from: capture.from, to: capture.to, promotion: capture.promotion });
+          return bestExchangeBalance(next, targetSquare);
+        });
+        const moverChooses = position.turn() === mover;
+        const continuation = moverChooses ? Math.max(...balances) : Math.min(...balances);
+        const bestBalance = moverChooses ? Math.max(standPat, continuation) : Math.min(standPat, continuation);
+        exchangeMemo.set(key, bestBalance);
+        return bestBalance;
+      };
+
+      // A piece being attacked does not by itself make a sacrifice. The
+      // opponent must have a legal capture that leaves a meaningful net loss
+      // after both sides choose their best continuation in that exchange.
       const captures = chess.moves({ verbose: true }).filter((reply) => reply.to === move.to && reply.captured);
       for (const capture of captures) {
         const afterCapture = new Chess(chess.fen());
         afterCapture.move({ from: capture.from, to: capture.to, promotion: capture.promotion });
-        let bestMaterialAfterReply = materialBalanceFor(afterCapture, mover);
-
-        const recaptures = afterCapture.moves({ verbose: true }).filter((reply) => reply.to === capture.to && reply.captured);
-        for (const recapture of recaptures) {
-          const afterRecapture = new Chess(afterCapture.fen());
-          afterRecapture.move({ from: recapture.from, to: recapture.to, promotion: recapture.promotion });
-          bestMaterialAfterReply = Math.max(bestMaterialAfterReply, materialBalanceFor(afterRecapture, mover));
-        }
-
+        const bestMaterialAfterReply = bestExchangeBalance(afterCapture, move.to);
         const netMaterialOffered = materialBefore - bestMaterialAfterReply;
         if (netMaterialOffered >= 200) return { netMaterialOffered, offeredPieceValue: movedPieceValue };
       }
@@ -632,19 +650,12 @@ function App() {
     playedBestMove,
     expectedPointsLoss,
     centipawnLoss,
-    bestExpectedPoints,
-    playedExpectedPoints,
     previousFen,
     playedMove,
   }) => {
     const sacrifice = findMaterialSacrifice(previousFen, playedMove);
-    const isBestOrNearBest = playedBestMove || (expectedPointsLoss <= 0.005 && centipawnLoss <= 15);
-    return Boolean(
-      isBestOrNearBest &&
-      sacrifice &&
-      playedExpectedPoints >= 0.4 &&
-      bestExpectedPoints < 0.95
-    );
+    const isBestOrNearBest = playedBestMove || (expectedPointsLoss <= 0.01 && centipawnLoss <= 35);
+    return Boolean(isBestOrNearBest && sacrifice);
   };
 
   const isGreatMove = ({
@@ -812,7 +823,7 @@ function App() {
         const secondScore = before.depths?.[2] === before.depths?.[1] ? before.alternatives?.[2] : null;
         const secondExpectedPoints = secondScore ? scoreToExpectedPoints(secondScore, beforeFen) : null;
         const secondBestExpectedPointsLoss = secondExpectedPoints === null ? 0 : Math.max(0, bestExpectedPoints - secondExpectedPoints);
-        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, expectedPointsLoss, centipawnLoss: cpLoss, bestExpectedPoints, playedExpectedPoints, previousFen: beforeFen, playedMove });
+        const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, expectedPointsLoss, centipawnLoss: cpLoss, previousFen: beforeFen, playedMove });
         const great = isGreatMove({ brilliant, playedBestMove: bestPlayed, secondBestExpectedPointsLoss, bestExpectedPoints });
         const forced = new Chess(beforeFen).moves().length === 1;
         let quality = brilliant ? "Brilliant" : great ? "Great" : classifyExpectedPointsLoss(expectedPointsLoss, bestPlayed);
@@ -1062,8 +1073,6 @@ function App() {
           playedBestMove,
           expectedPointsLoss,
           centipawnLoss: normalizedLoss,
-          bestExpectedPoints,
-          playedExpectedPoints,
           previousFen,
           playedMove,
         });
@@ -1265,7 +1274,7 @@ function App() {
             <div className="board-stage">
               <div className="evaluation-rail" aria-label={`Evaluation ${formatEvaluation(evaluation)}`}>
                 <span className="eval-rail-value">{formatEvaluation(evaluation)}</span>
-                <div className="evaluation-track"><i style={{ height: `${Math.max(8, Math.min(92, 50 + (evaluation?.type === "mate" ? Math.sign(evaluation.value) * 48 : (evaluation?.value || 0) / 24)))}%` }} /></div>
+                <div className="evaluation-track"><i style={{ height: `${evaluation?.type === "mate" ? (evaluation.value > 0 ? 100 : evaluation.value < 0 ? 0 : 50) : Math.max(5, Math.min(95, 50 + (evaluation?.value || 0) / 24))}%` }} /></div>
                 <span className="eval-rail-stat"><small>LOSS</small><b>{evalLoss === null ? "—" : `${(evalLoss / 100).toFixed(2)}`}</b></span>
                 <span className="eval-rail-stat"><small>PTS LOST</small><b>{expectedPointLoss === null ? "—" : expectedPointLoss.toFixed(2)}</b></span>
               </div>
