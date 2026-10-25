@@ -31,7 +31,7 @@ const QUALITY_STYLES = {
 
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
 
-const ACCURACY_LABEL = "Estimated move accuracy";
+const ACCURACY_LABEL = "Engine top-move match";
 const WIN_PERCENT_SLOPE = 0.00368208;
 // A small transparent opening book for common first moves. Unmatched moves
 // are scored normally; this avoids calling arbitrary early moves “book”.
@@ -90,10 +90,10 @@ function AccuracyCard({ side, accuracy }) {
     <div className={`accuracy-card ${colorClass}`}>
       <span>{side} · {ACCURACY_LABEL}</span>
       <strong>{percentage ?? "—"}{percentage !== null && <small>%</small>}</strong>
-      <div className="accuracy-meter" role="progressbar" aria-label={`${side} estimated move accuracy`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0}>
+      <div className="accuracy-meter" role="progressbar" aria-label={`${side} exact engine top-move rate`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0}>
         <i style={{ width: `${percentage ?? 0}%` }} />
       </div>
-      <small className="accuracy-detail">{accuracy ? `${accuracy.bestMatches} exact top moves · ${accuracy.total} moves scored` : "No moves to score"}</small>
+      <small className="accuracy-detail">{accuracy ? `${accuracy.bestMatches} of ${accuracy.total} moves matched` : "No moves to score"}</small>
     </div>
   );
 }
@@ -536,10 +536,8 @@ function App() {
   const calculateMoveAccuracy = (reviews, color) => {
     const sideReviews = reviews.filter((review) => review.color === color);
     if (!sideReviews.length) return null;
-    const moveScores = sideReviews.map((review) => 100 * Math.exp(-6 * Math.max(0, review.expectedPointsLoss || 0)));
-    const percentage = Math.round(moveScores.reduce((sum, score) => sum + score, 0) / moveScores.length);
     const bestMatches = sideReviews.filter((review) => review.bestMove && review.playedMove === review.bestMove).length;
-    return { percentage, bestMatches, total: sideReviews.length };
+    return { percentage: Math.round((bestMatches / sideReviews.length) * 100), bestMatches, total: sideReviews.length };
   };
 
   const materialBalanceFor = (chess, color) => chess.board().flat().reduce((balance, piece) => {
@@ -1298,7 +1296,7 @@ function App() {
                   <AccuracyCard side="White" accuracy={fullReview.whiteAccuracy} />
                   <AccuracyCard side="Black" accuracy={fullReview.blackAccuracy} />
                 </div>
-                <p className="accuracy-note">Moves close to Stockfish’s best line earn partial credit; larger expected-point losses reduce the score. Exact top-move matches are shown below each score.</p>
+                <p className="accuracy-note">Calculation: exact moves matching Stockfish’s top choice ÷ all moves played × 100. Near-best moves are still good moves, but they do not count as exact top-move matches.</p>
                 <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
                 <div className="review-section-heading"><h3>Move breakdown</h3><span>{fullReview.moves.length} analyzed</span></div>
