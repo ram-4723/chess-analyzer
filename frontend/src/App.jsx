@@ -19,6 +19,7 @@ const QUALITY_STYLES = {
   Brilliant: { type: "brilliant", color: "#1ba39c" },
   Great: { type: "great", color: "#5c8bbf" },
   Book: { type: "book", color: "#a88764" },
+  Forced: { type: "forced", color: "#8799ac" },
   Best: { type: "best", color: "#81b64c" },
   Excellent: { type: "excellent", color: "#81b64c" },
   Good: { type: "good", color: "#95b776" },
@@ -98,6 +99,9 @@ const QualityIcon = ({ quality, size = 34 }) => {
             <circle cx="29" cy="42" r="3.4" fill="white" />
           </>
         );
+
+      case "forced":
+        return <path d="M15 16 L32 29 L15 42 M29 16 L46 29 L29 42" fill="none" stroke="white" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />;
 
       case "book":
         return (
@@ -779,12 +783,15 @@ function App() {
         const secondBestExpectedPointsLoss = secondExpectedPoints === null ? 0 : Math.max(0, bestExpectedPoints - secondExpectedPoints);
         const brilliant = isBrilliantMove({ playedBestMove: bestPlayed, expectedPointsLoss, centipawnLoss: cpLoss, bestExpectedPoints, playedExpectedPoints, previousFen: beforeFen, playedMove });
         const great = isGreatMove({ brilliant, playedBestMove: bestPlayed, secondBestExpectedPointsLoss, bestExpectedPoints });
+        const forced = new Chess(beforeFen).moves().length === 1;
         let quality = brilliant ? "Brilliant" : great ? "Great" : classifyExpectedPointsLoss(expectedPointsLoss, bestPlayed);
         const sanPrefix = moveHistory.slice(0, index + 1);
         const isBook = OPENING_BOOK_LINES.some((line) => sanPrefix.every((san, prefixIndex) => line[prefixIndex] === san));
-        const missedWin = index > 0 && results[index - 1].expectedPointsLoss >= 0.05 && bestExpectedPoints >= 0.75 && playedExpectedPoints <= 0.5 && expectedPointsLoss >= 0.1;
-        if (isBook) quality = "Book";
-        else if (missedWin) quality = "Miss";
+        if (forced) quality = "Forced";
+        else if (isBook) quality = "Book";
+        else if (brilliant) quality = "Brilliant";
+        else if (great) quality = "Great";
+        else if (cpLoss >= 300 && playedExpectedPoints >= 0.5) quality = "Miss";
         const winBefore = winPercentFromWhiteCp(mover === "w" ? bestWhite : -bestWhite);
         const winAfter = winPercentFromWhiteCp(mover === "w" ? playedWhite : -playedWhite);
         const moveAccuracy = accuracyForWinPercentLoss(Math.max(0, winBefore - winAfter));
@@ -820,7 +827,7 @@ function App() {
 
   const moveQualityCounts = useMemo(() => {
     if (!fullReview) return [];
-    return ["Brilliant", "Great", "Best", "Excellent", "Good", "Book", "Inaccuracy", "Mistake", "Miss", "Blunder"]
+    return ["Brilliant", "Great", "Best", "Excellent", "Good", "Book", "Forced", "Inaccuracy", "Mistake", "Miss", "Blunder"]
       .map((quality) => ({ quality, count: fullReview.moves.filter((move) => move.quality === quality).length }))
       .filter((entry) => entry.count > 0);
   }, [fullReview]);
@@ -1042,11 +1049,12 @@ function App() {
           bestExpectedPoints,
         });
 
-        if (isBook) finalQuality = "Book";
+        const forced = new Chess(previousFen).moves().length === 1;
+        if (forced) finalQuality = "Forced";
+        else if (isBook) finalQuality = "Book";
         else if (brilliant) finalQuality = "Brilliant";
         else if (great) finalQuality = "Great";
-        const previousOpportunity = moveReviews[reviewIndex - 1];
-        if (!isBook && previousOpportunity?.expectedPointsLoss >= 0.05 && bestExpectedPoints >= 0.75 && playedExpectedPoints <= 0.5 && expectedPointsLoss >= 0.1) finalQuality = "Miss";
+        else if (normalizedLoss >= 300 && playedExpectedPoints >= 0.5) finalQuality = "Miss";
 
         setEvalLoss(normalizedLoss);
         setExpectedPointLoss(expectedPointsLoss);
@@ -1101,8 +1109,8 @@ function App() {
         height: "100%",
         borderRadius: "6px",
       },
-      lightSquareStyle: { backgroundColor: "#f1f0ed" },
-      darkSquareStyle: { backgroundColor: "#a9adb1" },
+      lightSquareStyle: { backgroundColor: "#a9b391" },
+      darkSquareStyle: { backgroundColor: "#58634f" },
     }),
     [fen, retryMoveIndex, fullReview]
   );
