@@ -30,6 +30,7 @@ const QUALITY_STYLES = {
 };
 
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
+const CAPTURED_PIECE_ICONS = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛" };
 
 const ACCURACY_LABEL = "Engine top-move match";
 const WIN_PERCENT_SLOPE = 0.00368208;
@@ -89,9 +90,8 @@ function AccuracyCard({ side, accuracy }) {
   return (
     <div className={`accuracy-card ${colorClass}`}>
       <span>{side} · {ACCURACY_LABEL}</span>
-      <strong>{percentage ?? "—"}{percentage !== null && <small>%</small>}</strong>
-      <div className="accuracy-meter" role="progressbar" aria-label={`${side} exact engine top-move rate`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0}>
-        <i style={{ width: `${percentage ?? 0}%` }} />
+      <div className="accuracy-ring" role="progressbar" aria-label={`${side} exact engine top-move rate`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0} style={{ "--ring-value": `${percentage ?? 0}%` }}>
+        <strong>{percentage ?? "—"}{percentage !== null && <small>%</small>}</strong>
       </div>
       <small className="accuracy-detail">{accuracy ? `${accuracy.bestMatches} of ${accuracy.total} moves matched` : "No moves to score"}</small>
     </div>
@@ -290,8 +290,12 @@ function App() {
   const [fullReview, setFullReview] = useState(null);
   const [reviewState, setReviewState] = useState({ status: "idle", completed: 0, total: 0 });
   const [gameInfo, setGameInfo] = useState(null);
+  const [capturedPieces, setCapturedPieces] = useState({ w: [], b: [] });
   const [retryMoveIndex, setRetryMoveIndex] = useState(null);
   const [retryFeedback, setRetryFeedback] = useState("");
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [previewMove, setPreviewMove] = useState(null);
+  const selectedMoveRef = useRef(null);
   const reviewRunRef = useRef(0);
   const searchRef = useRef(null);
 
@@ -299,6 +303,7 @@ function App() {
   const fenRef = useRef(START_FEN);
 
   const fen = fenHistory[currentMove] || START_FEN;
+  const boardFen = fenHistory[previewMove ?? currentMove] || fen;
 
   useEffect(() => {
     const closeSearch = (event) => {
@@ -344,6 +349,7 @@ function App() {
     }
 
     reviewRunRef.current += 1;
+    setIsPlaying(false);
     setGamesLoading(true);
 
     try {
@@ -361,6 +367,7 @@ function App() {
       setMoveReviews({});
       setFullReview(null);
       setGameInfo(null);
+      setCapturedPieces({ w: [], b: [] });
       setRetryMoveIndex(null);
       setRetryFeedback("");
       setReviewState({ status: "idle", completed: 0, total: 0 });
@@ -376,11 +383,16 @@ function App() {
 
   const loadGame = (pgn, info = {}) => {
     reviewRunRef.current += 1;
+    setIsPlaying(false);
+    setPreviewMove(null);
     try {
       const loadedGame = new Chess();
       loadedGame.loadPgn(pgn);
 
       const verboseMoves = loadedGame.history({ verbose: true });
+      const captures = { w: [], b: [] };
+      verboseMoves.forEach((move) => { if (move.captured) captures[move.color].push(move.captured); });
+      setCapturedPieces(captures);
       const replayGame = new Chess();
 
       const sans = [];
@@ -430,7 +442,38 @@ function App() {
 
   const jumpToMove = (moveIndex) => {
     setCurrentMove(Math.max(0, Math.min(moveIndex, fenHistory.length - 1)));
+    setPreviewMove(null);
   };
+
+  useEffect(() => {
+    if (!isPlaying) return undefined;
+    const timer = window.setInterval(() => {
+      setCurrentMove((move) => {
+        if (move >= fenHistory.length - 1) {
+          setIsPlaying(false);
+          return move;
+        }
+        return move + 1;
+      });
+    }, 650);
+    return () => window.clearInterval(timer);
+  }, [isPlaying, fenHistory.length]);
+
+  useEffect(() => {
+    const handleNavigation = (event) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || /INPUT|SELECT|TEXTAREA|BUTTON/.test(target.tagName))) return;
+      if (event.key === "ArrowLeft") { event.preventDefault(); setCurrentMove((move) => Math.max(move - 1, 0)); }
+      if (event.key === "ArrowRight") { event.preventDefault(); setCurrentMove((move) => Math.min(move + 1, fenHistory.length - 1)); }
+    };
+    window.addEventListener("keydown", handleNavigation);
+    return () => window.removeEventListener("keydown", handleNavigation);
+  }, [fenHistory.length]);
+
+  useEffect(() => {
+    selectedMoveRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [currentMove]);
 
   const getSideToMove = () => {
     return fen.split(" ")[1] === "w" ? "White" : "Black";
@@ -1073,7 +1116,20 @@ function App() {
 
   const chessboardOptions = useMemo(
     () => ({
-      position: fen,
+      position: boardFen,
+      animationDurationInMs: 250,
+      arrows: previewMove === null && bestMove && /^[a-h][1-8][a-h][1-8]/.test(bestMove)
+        ? [{ startSquare: bestMove.slice(0, 2), endSquare: bestMove.slice(2, 4), color: "rgba(191,255,86,.78)" }]
+        : [],
+      squareStyles: (() => {
+        const styles = {};
+        const lastMove = uciMoveHistory[(previewMove ?? currentMove) - 1];
+        if (lastMove) {
+          styles[lastMove.slice(0, 2)] = { boxShadow: "inset 0 0 0 3px rgba(191,255,86,.75)" };
+          styles[lastMove.slice(2, 4)] = { boxShadow: "inset 0 0 0 3px rgba(191,255,86,.9)", backgroundColor: "rgba(191,255,86,.22)" };
+        }
+        return styles;
+      })(),
       allowDragging: retryMoveIndex !== null,
       onPieceDrop: ({ sourceSquare, targetSquare }) => {
         if (retryMoveIndex === null || !fullReview || !targetSquare) return false;
@@ -1097,7 +1153,7 @@ function App() {
       lightSquareStyle: { backgroundColor: "#dce8e4" },
       darkSquareStyle: { backgroundColor: "#627d7a" },
     }),
-    [fen, retryMoveIndex, fullReview]
+    [fen, boardFen, retryMoveIndex, fullReview, bestMove, uciMoveHistory, previewMove, currentMove]
   );
 
   return (
@@ -1106,10 +1162,15 @@ function App() {
         <div className="app-brand">
           <span className="brand-knight" aria-hidden="true">♞</span>
           <div>
-            <p className="eyebrow">GAME REVIEW</p>
-            <h1>Chess Analyzer</h1>
-            <p className="header-caption">A clear, engine-powered breakdown of your game.</p>
+            <p className="eyebrow">ENGINE ROOM</p>
+            <h1>CHECKMATE<span> / LAB</span></h1>
           </div>
+        </div>
+        <div className="game-identity" aria-live="polite">
+          <span className="live-kicker"><i /> {gameInfo ? "GAME REPLAY" : "ANALYSIS STUDIO"}</span>
+          <strong>{gameInfo ? `${gameInfo.white} vs ${gameInfo.black}` : "Your next great game starts here"}</strong>
+          <span>{gameInfo ? `${gameInfo.opening} · ${gameInfo.timeClass}` : "Stockfish powered · Precision move review"}</span>
+          {gameInfo && <b className="identity-result">{gameInfo.result}</b>}
         </div>
         <form
           className="player-search"
@@ -1119,8 +1180,8 @@ function App() {
             fetchGames();
           }}
         >
-          <label htmlFor="chess-username">Find a player’s games</label>
           <div className="search-controls">
+            <span className="search-glyph" aria-hidden="true">⌕</span>
             <input
               id="chess-username"
               type="text"
@@ -1137,7 +1198,7 @@ function App() {
                 setSearchError("");
               }}
             />
-            <button className="primary-button" type="submit" disabled={gamesLoading}>
+              <button className="primary-button" type="submit" disabled={gamesLoading}>
               {gamesLoading ? "Searching…" : "Find games"}
             </button>
           </div>
@@ -1189,11 +1250,11 @@ function App() {
           <div className="board-card">
             <div className="board-heading">
               <div>
-                <p className="eyebrow">CURRENT POSITION</p>
+                <p className="eyebrow">BOARD · MOVE {currentMove}</p>
                 <h2>{getCurrentGameMove()}</h2>
               </div>
               <span className={`engine-pill ${engineReady ? "is-ready" : ""}`}>
-                <span className="status-dot" /> {engineStatus}
+                <span className="status-dot" /> {engineStatus}{engineDepth ? ` · depth ${engineDepth}` : ""}
               </span>
             </div>
             {retryMoveIndex !== null && (
@@ -1202,14 +1263,31 @@ function App() {
                 <button onClick={() => { setRetryMoveIndex(null); setRetryFeedback(""); }}>Exit retry</button>
               </div>
             )}
-            <div className="board-frame">
-              <Chessboard options={chessboardOptions} />
-              {getCurrentMoveIconOverlay()}
+            <div className="player-rail player-rail-top"><span className="player-avatar">♚</span><span><b>{gameInfo?.black || "Black"}</b><small>BLACK · {gameInfo?.result === "0-1" ? "WINNER" : "PLAYER"}</small><em className="captured-material" aria-label={`Black captured ${capturedPieces.b.length} pieces`}>{capturedPieces.b.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em></span><i>{evaluation?.value < 0 ? `LEADS ${formatEvaluation(evaluation)}` : "BLACK"}</i></div>
+            <div className="board-stage">
+              <div className="evaluation-rail" aria-label={`Evaluation ${formatEvaluation(evaluation)}`}>
+                <span className="eval-rail-value">{formatEvaluation(evaluation)}</span>
+                <div className="evaluation-track"><i style={{ height: `${Math.max(8, Math.min(92, 50 + (evaluation?.type === "mate" ? Math.sign(evaluation.value) * 48 : (evaluation?.value || 0) / 24)))}%` }} /></div>
+              </div>
+              <div className="board-frame">
+                <Chessboard options={chessboardOptions} />
+                {getCurrentMoveIconOverlay()}
+                {previewMove !== null && <span className="preview-ribbon">PREVIEW · MOVE {previewMove}</span>}
+              </div>
             </div>
+            <div className="player-rail player-rail-bottom"><span className="player-avatar">♔</span><span><b>{gameInfo?.white || "White"}</b><small>WHITE · {gameInfo?.result === "1-0" ? "WINNER" : "PLAYER"}</small><em className="captured-material" aria-label={`White captured ${capturedPieces.w.length} pieces`}>{capturedPieces.w.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em></span><i>{evaluation?.value > 0 ? `LEADS ${formatEvaluation(evaluation)}` : "WHITE"}</i></div>
             <div className="board-navigation">
-              <button onClick={previousMove} disabled={currentMove === 0} aria-label="Previous move">← Previous</button>
-              <span>Move <strong>{currentMove}</strong> / {fenHistory.length - 1}</span>
-              <button onClick={nextMove} disabled={currentMove === fenHistory.length - 1} aria-label="Next move">Next →</button>
+              <button onClick={() => jumpToMove(0)} disabled={currentMove === 0} aria-label="First move">|◀</button>
+              <button onClick={previousMove} disabled={currentMove === 0} aria-label="Previous move">◀</button>
+              <button className="play-control" onClick={() => setIsPlaying((playing) => !playing)} aria-label={isPlaying ? "Pause replay" : "Play replay"}>{isPlaying ? "Ⅱ" : "▶"}</button>
+              <button onClick={nextMove} disabled={currentMove === fenHistory.length - 1} aria-label="Next move">▶</button>
+              <button onClick={() => jumpToMove(fenHistory.length - 1)} disabled={currentMove === fenHistory.length - 1} aria-label="Last move">▶|</button>
+              <span className="move-counter">{String(currentMove).padStart(2, "0")} <i>/</i> {String(fenHistory.length - 1).padStart(2, "0")}</span>
+            </div>
+            <div className="game-scrubber" role="group" aria-label="Game timeline">
+              <input aria-label="Choose move" type="range" min="0" max={Math.max(1, fenHistory.length - 1)} value={currentMove} onChange={(event) => jumpToMove(Number(event.target.value))} style={{ "--progress": `${fenHistory.length > 1 ? currentMove / (fenHistory.length - 1) * 100 : 0}%` }} />
+              <div className="scrubber-markers" aria-hidden="true">{fullReview?.moves.map((move, index) => <i key={index} style={{ left: `${((index + 1) / Math.max(1, moveHistory.length)) * 100}%`, background: getQualityStyle(move.quality)?.color || "#59605f" }} />)}</div>
+              <span className="keyboard-hints"><kbd>←</kbd><kbd>→</kbd><small>navigate</small></span>
             </div>
           </div>
         </section>
@@ -1265,6 +1343,7 @@ function App() {
               <div><span>Best move</span><strong>{getBestMoveSan(bestMove)}</strong></div>
               <div><span>Best line</span><strong className="best-line">{getBestLineSan()}</strong></div>
             </div>
+            <div className="depth-meter" aria-label={`Engine depth ${engineDepth || 0} of ${analysisDepth}`}><span>ENGINE DEPTH</span><b>{engineDepth || 0}<i> / {analysisDepth}</i></b><div><i style={{ width: `${Math.min(100, (engineDepth || 0) / analysisDepth * 100)}%` }} /></div></div>
           </section>
 
           <section className="panel full-review-panel">
@@ -1334,7 +1413,7 @@ function App() {
             </div>
             {moveHistory.length ? (
               <>
-                <div className="move-list-head" aria-hidden="true"><span /> <span>White</span><span>Black</span></div>
+                <div className="move-list-head" aria-label={`Move list: White ${gameInfo?.white || "White"}, Black ${gameInfo?.black || "Black"}`}><span /> <span title={gameInfo?.white || "White"}>{gameInfo?.white || "White"}</span><span title={gameInfo?.black || "Black"}>{gameInfo?.black || "Black"}</span></div>
                 <div className="move-list">
                   {Array.from({ length: Math.ceil(moveHistory.length / 2) }, (_, rowIndex) => {
                     const whiteIndex = rowIndex * 2;
@@ -1347,9 +1426,14 @@ function App() {
                           className={`move-item ${selected ? "is-selected" : ""} ${index % 2 ? "black-move" : "white-move"}`}
                           key={`${index}-${moveHistory[index]}`}
                           onClick={() => jumpToMove(index + 1)}
+                          onMouseEnter={() => setPreviewMove(index + 1)}
+                          onMouseLeave={() => setPreviewMove(null)}
+                          ref={selected ? selectedMoveRef : undefined}
+                          title={`${Math.floor(index / 2) + 1}${index % 2 ? "..." : "."} ${moveHistory[index]}${review ? ` · ${review.quality}` : ""}`}
+                          aria-label={`${index % 2 ? "Black" : "White"} move ${Math.floor(index / 2) + 1}: ${moveHistory[index]}${review ? `, ${review.quality}` : ""}`}
                           aria-current={selected ? "step" : undefined}
                         >
-                          <span>{moveHistory[index]}</span>
+                          <span><small className="move-san-number">{index % 2 === 0 ? `${Math.floor(index / 2) + 1}.` : ""}</small>{moveHistory[index]}</span>
                           {review && <QualityIcon quality={review.quality} size={19} />}
                         </button>
                       );
