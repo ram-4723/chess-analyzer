@@ -1507,7 +1507,13 @@ function App() {
 
             <div className="recommendation-list">
               <div><span>ENGINE’S TOP MOVE</span><strong>{getBestMoveSan(bestMove)}</strong></div>
-              <div><span>BEST LINE</span><strong className="best-line">{getBestLineSan()}</strong></div>
+              <details className="best-line-disclosure">
+                <summary>
+                  <span>BEST LINE</span>
+                  <b>{bestLine.length ? `${bestLine.length} engine moves` : "Waiting for Stockfish"}</b>
+                </summary>
+                <strong className="best-line">{getBestLineSan()}</strong>
+              </details>
             </div>
 
             <details className="settings-disclosure">

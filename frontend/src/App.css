@@ -424,3 +424,14 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .board-flip-control[aria-pressed="true"] svg { transform: rotate(180deg); }
 .board-flip-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 560px) { .board-heading { align-items: flex-start; } .board-heading-tools { flex-direction: column-reverse; align-items: flex-end; gap: 5px; } .board-flip-control { min-height: 44px; padding-inline: 9px; } .board-heading-tools .engine-pill { max-width: 150px; } }
+
+.best-line-disclosure { overflow: hidden; border: 1px solid #ffffff16; border-radius: 11px; background: #ffffff04; }
+.best-line-disclosure summary { min-height: 44px; padding: 9px 11px; display: flex; align-items: center; gap: 9px; color: #aeb9ae; font-size: 14px; font-weight: 700; cursor: pointer; list-style: none; }
+.best-line-disclosure summary::-webkit-details-marker { display: none; }
+.best-line-disclosure summary::after { width: 22px; height: 22px; margin-left: 0; display: grid; flex: 0 0 22px; place-items: center; border: 1px solid #ffffff17; border-radius: 7px; color: var(--accent); content: '+'; font-size: 16px; }
+.best-line-disclosure[open] summary::after { content: '−'; background: #bbf36b12; }
+.best-line-disclosure summary>span { color: #aeb9ae; font-size: 14px; }
+.best-line-disclosure summary b { margin-left: auto; color: #859186; font-size: 12px; font-weight: 500; }
+.best-line-disclosure .best-line { margin: 0; padding: 0 11px 11px; display: block; border-top: 1px solid #ffffff12; }
+.best-line-disclosure:focus-within { border-color: #bbf36b56; }
+.best-line-disclosure summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
