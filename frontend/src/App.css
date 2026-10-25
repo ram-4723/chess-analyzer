@@ -160,6 +160,7 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .white-dot { background: var(--accent); box-shadow: 0 0 8px #bbf36b70; }
 .black-dot { background: #78877b; }
 .eval-graph { width: 100%; height: auto; display: block; margin-top: 8px; overflow: visible; }
+.graph-plot-surface { fill: #26262a; stroke: rgba(255,255,255,.08); stroke-width: 1; }
 .graph-white-area { fill: #fff; }
 .graph-black-area { fill: #000; }
 .graph-zero { stroke: #72807488; stroke-width: 1; stroke-dasharray: 3 5; }

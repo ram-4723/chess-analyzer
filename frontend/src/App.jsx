@@ -75,6 +75,7 @@ function EvaluationGraph({ points, currentMove, onSelectMove }) {
     <div className="eval-graph-wrap">
       <div className="graph-legend"><span><i className="white-dot" /> White advantage</span><span><i className="black-dot" /> Black advantage</span></div>
       <svg className="eval-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Evaluation through the game">
+        <rect className="graph-plot-surface" x={pad} y={pad} width={width - pad * 2} height={height - pad * 2} rx="8" />
         <defs><clipPath id="evaluation-plot-clip"><rect x={pad} y={pad} width={width - pad * 2} height={height - pad * 2} rx="8" /></clipPath></defs>
         <g clipPath="url(#evaluation-plot-clip)">
           <path d={areaAbove} className="graph-white-area" />
