@@ -32,7 +32,7 @@ const QUALITY_STYLES = {
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
 const CAPTURED_PIECE_ICONS = { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛" };
 
-const ACCURACY_LABEL = "Engine top-three match";
+const ACCURACY_LABEL = "Top-3 eval-safe match";
 const WIN_PERCENT_SLOPE = 0.00368208;
 // A small transparent opening book for common first moves. Unmatched moves
 // are scored normally; this avoids calling arbitrary early moves “book”.
@@ -104,10 +104,10 @@ function AccuracyCard({ side, accuracy }) {
   return (
     <div className={`accuracy-card ${colorClass}`}>
       <span>{side} · {ACCURACY_LABEL}</span>
-      <div className="accuracy-ring" role="progressbar" aria-label={`${side} engine top-three match rate`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0} style={{ "--ring-value": `${percentage ?? 0}%` }}>
+      <div className="accuracy-ring" role="progressbar" aria-label={`${side} top-three eval-safe match rate`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0} style={{ "--ring-value": `${percentage ?? 0}%` }}>
         <strong>{percentage ?? "—"}{percentage !== null && <small>%</small>}</strong>
       </div>
-      <small className="accuracy-detail">{accuracy ? `${accuracy.topThreeMatches} of ${accuracy.total} moves matched the engine top 3` : "No moves to score"}</small>
+      <small className="accuracy-detail">{accuracy ? `${accuracy.topThreeMatches} of ${accuracy.total} moves matched top 3 without lowering eval` : "No moves to score"}</small>
     </div>
   );
 }
@@ -596,7 +596,13 @@ function App() {
   const calculateMoveAccuracy = (reviews, color) => {
     const sideReviews = reviews.filter((review) => review.color === color);
     if (!sideReviews.length) return null;
-    const topThreeMatches = sideReviews.filter((review) => review.topMoves?.includes(review.playedMove)).length;
+    const topThreeMatches = sideReviews.filter((review) => {
+      const isTopThreeMove = review.topMoves?.includes(review.playedMove);
+      const preservesMoverEval = review.color === "w"
+        ? review.playedWhite >= review.bestWhite
+        : review.playedWhite <= review.bestWhite;
+      return isTopThreeMove && preservesMoverEval;
+    }).length;
     return { percentage: Math.round((topThreeMatches / sideReviews.length) * 100), topThreeMatches, total: sideReviews.length };
   };
 
@@ -1435,7 +1441,7 @@ function App() {
                   <AccuracyCard side="White" accuracy={fullReview.whiteAccuracy} />
                   <AccuracyCard side="Black" accuracy={fullReview.blackAccuracy} />
                 </div>
-                <p className="accuracy-note">Calculation: top-three engine matches ÷ all moves played × 100. A move counts when it appears in the engine's three principal variations.</p>
+                <p className="accuracy-note">Calculation: top-three matches that preserve or improve mover evaluation ÷ all moves played × 100.</p>
                 <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
                 <details className="report-details">
