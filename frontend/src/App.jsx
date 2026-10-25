@@ -59,13 +59,15 @@ function EvaluationGraph({ points, currentMove, onSelectMove }) {
   const x = (index) => pad + (points.length < 2 ? 0 : (index / (points.length - 1)) * (width - pad * 2));
   const y = (value) => pad + ((range - value) / (range * 2)) * (height - pad * 2);
   const line = values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
+  const areaAbove = `M ${x(0)} ${pad} L ${values.map((value, index) => `${x(index)} ${y(value)}`).join(" L ")} L ${x(values.length - 1)} ${pad} Z`;
+  const areaBelow = `M ${x(0)} ${height - pad} L ${values.map((value, index) => `${x(index)} ${y(value)}`).join(" L ")} L ${x(values.length - 1)} ${height - pad} Z`;
   const zeroY = y(0);
   return (
     <div className="eval-graph-wrap">
       <div className="graph-legend"><span><i className="white-dot" /> White advantage</span><span><i className="black-dot" /> Black advantage</span></div>
       <svg className="eval-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Evaluation through the game">
-        <rect x={pad} y={pad} width={width - pad * 2} height={zeroY - pad} rx="8" className="graph-white-area" />
-        <rect x={pad} y={zeroY} width={width - pad * 2} height={height - pad - zeroY} rx="8" className="graph-black-area" />
+        <path d={areaAbove} className="graph-white-area" />
+        <path d={areaBelow} className="graph-black-area" />
         <line x1={pad} y1={zeroY} x2={width - pad} y2={zeroY} className="graph-zero" />
         <text x={pad - 5} y={pad - 9} textAnchor="start" className="graph-y-label">+{range.toFixed(1)}</text>
         <text x={pad - 5} y={height - pad + 15} textAnchor="start" className="graph-y-label">−{range.toFixed(1)}</text>
