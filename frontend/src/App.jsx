@@ -432,6 +432,10 @@ function App() {
       setGameInfo({
         white: info.white?.username || headers.White || "White",
         black: info.black?.username || headers.Black || "Black",
+        whiteElo: info.white?.rating ?? headers.WhiteElo ?? headers.WhiteRating ?? null,
+        blackElo: info.black?.rating ?? headers.BlackElo ?? headers.BlackRating ?? null,
+        whiteTitle: info.white?.title || headers.WhiteTitle || "",
+        blackTitle: info.black?.title || headers.BlackTitle || "",
         result: headers.Result || (info.white?.result === "win" ? `${info.white?.username || "White"} won` : info.black?.result === "win" ? `${info.black?.username || "Black"} won` : info.white?.result === "agreed" || info.white?.result === "repetition" ? "Draw" : "—"),
         date: info.end_time ? new Date(info.end_time * 1000).toLocaleDateString() : headers.Date || "Date unavailable",
         timeClass: info.time_class || "Game",
@@ -1282,7 +1286,15 @@ function App() {
                 <button onClick={() => { setRetryMoveIndex(null); setRetryFeedback(""); }}>Exit retry</button>
               </div>
             )}
-            <div className="player-rail player-rail-top"><span className="player-avatar">♚</span><span><b>{gameInfo?.black || "Black"}</b><small>BLACK · {gameInfo?.result === "0-1" ? "WINNER" : "PLAYER"}</small><em className="captured-material" aria-label={`Black captured ${capturedPieces.b.length} pieces`}>{capturedPieces.b.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em></span><i>{evaluation?.value < 0 ? `LEADS ${formatEvaluation(evaluation)}` : "BLACK"}</i></div>
+            <div className="player-rail player-rail-top">
+              <span className="player-avatar" aria-hidden="true">♚</span>
+              <span className="player-identity">
+                <b>{gameInfo?.black || "Black"}</b>
+                <span className="player-meta"><small>PLAYER</small><em className="elo-chip">{gameInfo?.blackElo || "—"}</em>{gameInfo?.blackTitle && <em className="player-title-chip">{gameInfo.blackTitle}</em>}</span>
+                <em className="captured-material" aria-label={`Black captured ${capturedPieces.b.length} pieces`}>{capturedPieces.b.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em>
+              </span>
+              <i className="player-edge-label">{evaluation?.value < 0 ? `LEADS ${formatEvaluation(evaluation)}` : "BLACK"}</i>
+            </div>
             <div className="board-stage">
               <div className="evaluation-rail" aria-label={`Evaluation ${formatEvaluation(evaluation)}`}>
                 <span className="eval-rail-value">{formatEvaluation(evaluation)}</span>
@@ -1296,7 +1308,15 @@ function App() {
                 {previewMove !== null && <span className="preview-ribbon">PREVIEW · MOVE {previewMove}</span>}
               </div>
             </div>
-            <div className="player-rail player-rail-bottom"><span className="player-avatar">♔</span><span><b>{gameInfo?.white || "White"}</b><small>WHITE · {gameInfo?.result === "1-0" ? "WINNER" : "PLAYER"}</small><em className="captured-material" aria-label={`White captured ${capturedPieces.w.length} pieces`}>{capturedPieces.w.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em></span><i>{evaluation?.value > 0 ? `LEADS ${formatEvaluation(evaluation)}` : "WHITE"}</i></div>
+            <div className="player-rail player-rail-bottom">
+              <span className="player-avatar" aria-hidden="true">♔</span>
+              <span className="player-identity">
+                <b>{gameInfo?.white || "White"}</b>
+                <span className="player-meta"><small>PLAYER</small><em className="elo-chip">{gameInfo?.whiteElo || "—"}</em>{gameInfo?.whiteTitle && <em className="player-title-chip">{gameInfo.whiteTitle}</em>}</span>
+                <em className="captured-material" aria-label={`White captured ${capturedPieces.w.length} pieces`}>{capturedPieces.w.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em>
+              </span>
+              <i className="player-edge-label">{evaluation?.value > 0 ? `LEADS ${formatEvaluation(evaluation)}` : "WHITE"}</i>
+            </div>
             <div className="board-navigation">
               <button onClick={() => jumpToMove(0)} disabled={currentMove === 0} aria-label="First move">|◀</button>
               <button onClick={previousMove} disabled={currentMove === 0} aria-label="Previous move">◀</button>
@@ -1397,7 +1417,7 @@ function App() {
                   <summary>Move breakdown &amp; key moments <span>{fullReview.moves.length} moves · {fullReview.moments.length} moments</span></summary>
                   <p className="classification-note">Standard labels use expected-points-loss bands published by Chess.com. Special labels use engine-based app rules.</p>
                   <div className="quality-counts">
-                    {moveQualityCounts.map(({ quality, count }) => <span className="quality-count" key={quality}><QualityIcon quality={quality} size={18} />{quality}<b>{count}</b></span>)}
+                {moveQualityCounts.map(({ quality, count }) => <span className="quality-count" key={quality}><QualityIcon quality={quality} size={22} />{quality}<b>{count}</b></span>)}
                   </div>
                   <div className="review-section-heading moments-heading"><h3>Key moments</h3><span>{fullReview.moments.length}</span></div>
                   {fullReview.moments.length ? (
@@ -1451,7 +1471,7 @@ function App() {
                           aria-current={selected ? "step" : undefined}
                         >
                           <span><small className="move-san-number">{index % 2 === 0 ? `${Math.floor(index / 2) + 1}.` : ""}</small>{moveHistory[index]}</span>
-                          {review && <QualityIcon quality={review.quality} size={19} />}
+                          {review && <QualityIcon quality={review.quality} size={24} />}
                         </button>
                       );
                     };
