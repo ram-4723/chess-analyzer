@@ -413,6 +413,7 @@ button:focus-visible { outline-color: #5ad4ca70; }
 .graph-white-area { fill: #5ad4ca12; }
 .graph-black-area { fill: #aebbd012; }
 .graph-zero { stroke: #536579; }
+.graph-y-label { fill: #9fb0c0; font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
 .graph-line { stroke: #5ad4ca; }
 .graph-point { fill: #a9b8c7; stroke: #1a2736; }
 .graph-empty { border-color: #354456; color: #9eafc0; background: #1a2736; }

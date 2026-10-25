@@ -16,17 +16,17 @@ const PIECE_VALUES = {
 };
 
 const QUALITY_STYLES = {
-  Brilliant: { type: "brilliant", color: "#1ba39c" },
-  Great: { type: "great", color: "#5c8bbf" },
-  Book: { type: "book", color: "#a88764" },
-  Forced: { type: "forced", color: "#8799ac" },
-  Best: { type: "best", color: "#81b64c" },
-  Excellent: { type: "excellent", color: "#81b64c" },
-  Good: { type: "good", color: "#95b776" },
-  Inaccuracy: { type: "inaccuracy", color: "#f7c045" },
-  Mistake: { type: "mistake", color: "#ffa459" },
-  Miss: { type: "miss", color: "#ff7769" },
-  Blunder: { type: "blunder", color: "#fa412d" },
+  Brilliant: { type: "brilliant", color: "#2fc69d" },
+  Great: { type: "great", color: "#6f91b3" },
+  Book: { type: "book", color: "#c99d7b" },
+  Forced: { type: "forced", color: "#8fac83" },
+  Best: { type: "best", color: "#7bbd40" },
+  Excellent: { type: "excellent", color: "#7dbd42" },
+  Good: { type: "good", color: "#708b57" },
+  Inaccuracy: { type: "inaccuracy", color: "#f3c22e" },
+  Mistake: { type: "mistake", color: "#f5904c" },
+  Miss: { type: "miss", color: "#ef5e64" },
+  Blunder: { type: "blunder", color: "#f12229" },
 };
 
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
@@ -50,10 +50,13 @@ function EvaluationGraph({ points, currentMove, onSelectMove }) {
   }
   const width = 600;
   const height = 220;
-  const pad = 18;
-  const values = points.map((point) => Math.max(-900, Math.min(900, point / 100)));
+  const pad = 28;
+  const rawValues = points.map((point) => Number.isFinite(point) ? point / 100 : 0);
+  const maxAbsValue = Math.max(0, ...rawValues.map((value) => Math.abs(value)));
+  const range = Math.min(12, Math.max(1, Math.ceil(maxAbsValue * 1.12)));
+  const values = rawValues.map((value) => Math.max(-range, Math.min(range, value)));
   const x = (index) => pad + (points.length < 2 ? 0 : (index / (points.length - 1)) * (width - pad * 2));
-  const y = (value) => pad + ((4.5 - value) / 9) * (height - pad * 2);
+  const y = (value) => pad + ((range - value) / (range * 2)) * (height - pad * 2);
   const line = values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
   const zeroY = y(0);
   return (
@@ -63,12 +66,16 @@ function EvaluationGraph({ points, currentMove, onSelectMove }) {
         <rect x={pad} y={pad} width={width - pad * 2} height={zeroY - pad} rx="8" className="graph-white-area" />
         <rect x={pad} y={zeroY} width={width - pad * 2} height={height - pad - zeroY} rx="8" className="graph-black-area" />
         <line x1={pad} y1={zeroY} x2={width - pad} y2={zeroY} className="graph-zero" />
+        <text x={pad - 5} y={pad - 9} textAnchor="start" className="graph-y-label">+{range.toFixed(1)}</text>
+        <text x={pad - 5} y={height - pad + 15} textAnchor="start" className="graph-y-label">−{range.toFixed(1)}</text>
         <polyline points={line} className="graph-line" />
         {values.map((value, index) => (
           <circle key={index} cx={x(index)} cy={y(value)} r={index === currentMove ? 5 : 2.4}
             className={index === currentMove ? "graph-point current" : "graph-point"}
             role="button" tabIndex={0} aria-label={index === 0 ? "Start position" : `Move ${index}`}
-            onClick={() => onSelectMove(index)} onKeyDown={(event) => event.key === "Enter" && onSelectMove(index)} />
+            onClick={() => onSelectMove(index)} onKeyDown={(event) => event.key === "Enter" && onSelectMove(index)}>
+            <title>{index === 0 ? "Start position" : `After move ${index}`} · {value >= 0 ? `White +${value.toFixed(2)}` : `Black +${Math.abs(value).toFixed(2)}`} pawns</title>
+          </circle>
         ))}
       </svg>
       <div className="graph-axis"><span>Start</span><span>Move {points.length - 1}</span></div>
@@ -116,7 +123,7 @@ const QualityIcon = ({ quality, size = 34 }) => {
         );
 
       case "forced":
-        return <path d="M15 16 L32 29 L15 42 M29 16 L46 29 L29 42" fill="none" stroke="white" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />;
+        return <path d="M8 24 H31 V14 L50 29 L31 44 V34 H8 Z" fill="white" />;
 
       case "book":
         return (
