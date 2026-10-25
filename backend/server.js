@@ -15,7 +15,6 @@ app.get("/player/:username", async (req, res) => {
     );
 
     res.json(response.data);
-
   } catch (error) {
     res.status(404).json({
       error: "Player not found",
@@ -30,15 +29,39 @@ app.get("/games/:username", async (req, res) => {
     const archiveResponse = await axios.get(
       `https://api.chess.com/pub/player/${username}/games/archives`
     );
+    const archives = archiveResponse.data.archives || [];
+    const recentGames = [];
+    let archiveIndex = archives.length;
 
-    const archives = archiveResponse.data.archives;
+    // Start with the current archive, then work backward only as far as needed
+    // to return a useful recent batch. Keep requests serial to respect PubAPI
+    // rate limits for parallel archive access.
+    while (archiveIndex > 0 && recentGames.length < 50) {
+      const batchStart = Math.max(0, archiveIndex - 3);
+      const newestFirstBatch = archives.slice(batchStart, archiveIndex).reverse();
+      for (const archiveUrl of newestFirstBatch) {
+        try {
+          const response = await axios.get(archiveUrl);
+          if (Array.isArray(response.data.games)) recentGames.push(...response.data.games);
+        } catch (error) {
+          console.warn(`Could not fetch Chess.com archive ${archiveUrl}:`, error.message);
+        }
+        if (recentGames.length >= 50) break;
+      }
+      archiveIndex = batchStart;
+    }
 
-    const latestArchive = archives[archives.length - 1];
+    const uniqueGames = new Map();
+    for (const game of recentGames) {
+      const key = game.url || `${game.end_time || 0}:${game.pgn || ""}`;
+      if (!uniqueGames.has(key)) uniqueGames.set(key, game);
+    }
 
-    const gamesResponse = await axios.get(latestArchive);
+    const sortedGames = [...uniqueGames.values()].sort(
+      (first, second) => Number(second.end_time || 0) - Number(first.end_time || 0)
+    );
 
-    res.json(gamesResponse.data.games);
-
+    res.json(sortedGames.slice(0, 50));
   } catch (error) {
     res.status(500).json({
       error: "Could not fetch games",

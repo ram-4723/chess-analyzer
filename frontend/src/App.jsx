@@ -373,7 +373,10 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not fetch games.");
       const results = Array.isArray(data) ? data : Array.isArray(data.games) ? data.games : [];
-      setGames(results);
+      const newestFirst = [...results]
+        .sort((first, second) => Number(second.end_time || 0) - Number(first.end_time || 0))
+        .slice(0, 50);
+      setGames(newestFirst);
       if (!results.length) setSearchError(`No recent games found for ${player}.`);
       setFenHistory([START_FEN]);
       setMoveHistory([]);
