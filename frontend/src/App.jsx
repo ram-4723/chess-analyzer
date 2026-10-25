@@ -58,28 +58,40 @@ function EvaluationGraph({ points, currentMove, onSelectMove }) {
   const values = rawValues.map((value) => Math.max(-range, Math.min(range, value)));
   const x = (index) => pad + (points.length < 2 ? 0 : (index / (points.length - 1)) * (width - pad * 2));
   const y = (value) => pad + ((range - value) / (range * 2)) * (height - pad * 2);
-  const line = values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
-  const areaAbove = `M ${x(0)} ${pad} L ${values.map((value, index) => `${x(index)} ${y(value)}`).join(" L ")} L ${x(values.length - 1)} ${pad} Z`;
-  const areaBelow = `M ${x(0)} ${height - pad} L ${values.map((value, index) => `${x(index)} ${y(value)}`).join(" L ")} L ${x(values.length - 1)} ${height - pad} Z`;
+  const curvePoints = values.map((value, index) => ({ x: x(index), y: y(value) }));
+  const curveSegments = curvePoints.slice(0, -1).map((point, index) => {
+    const previous = curvePoints[Math.max(0, index - 1)];
+    const next = curvePoints[index + 1];
+    const afterNext = curvePoints[Math.min(curvePoints.length - 1, index + 2)];
+    const control1 = { x: point.x + (next.x - previous.x) / 6, y: point.y + (next.y - previous.y) / 6 };
+    const control2 = { x: next.x - (afterNext.x - point.x) / 6, y: next.y - (afterNext.y - point.y) / 6 };
+    return `C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${next.x} ${next.y}`;
+  }).join(" ");
+  const line = `M ${curvePoints[0].x} ${curvePoints[0].y} ${curveSegments}`;
+  const areaAbove = `M ${curvePoints[0].x} ${pad} L ${curvePoints[0].x} ${curvePoints[0].y} ${curveSegments} L ${curvePoints[curvePoints.length - 1].x} ${pad} Z`;
+  const areaBelow = `M ${curvePoints[0].x} ${height - pad} L ${curvePoints[0].x} ${curvePoints[0].y} ${curveSegments} L ${curvePoints[curvePoints.length - 1].x} ${height - pad} Z`;
   const zeroY = y(0);
   return (
     <div className="eval-graph-wrap">
       <div className="graph-legend"><span><i className="white-dot" /> White advantage</span><span><i className="black-dot" /> Black advantage</span></div>
       <svg className="eval-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Evaluation through the game">
-        <path d={areaAbove} className="graph-white-area" />
-        <path d={areaBelow} className="graph-black-area" />
-        <line x1={pad} y1={zeroY} x2={width - pad} y2={zeroY} className="graph-zero" />
+        <defs><clipPath id="evaluation-plot-clip"><rect x={pad} y={pad} width={width - pad * 2} height={height - pad * 2} rx="8" /></clipPath></defs>
+        <g clipPath="url(#evaluation-plot-clip)">
+          <path d={areaAbove} className="graph-white-area" />
+          <path d={areaBelow} className="graph-black-area" />
+          <line x1={pad} y1={zeroY} x2={width - pad} y2={zeroY} className="graph-zero" />
+          <path d={line} className="graph-line" />
+          {values.map((value, index) => (
+            <circle key={index} cx={x(index)} cy={y(value)} r={index === currentMove ? 5 : 2.4}
+              className={index === currentMove ? "graph-point current" : "graph-point"}
+              role="button" tabIndex={0} aria-label={index === 0 ? "Start position" : `Move ${index}`}
+              onClick={() => onSelectMove(index)} onKeyDown={(event) => event.key === "Enter" && onSelectMove(index)}>
+              <title>{index === 0 ? "Start position" : `After move ${index}`} · {value >= 0 ? `White +${value.toFixed(2)}` : `Black +${Math.abs(value).toFixed(2)}`} pawns</title>
+            </circle>
+          ))}
+        </g>
         <text x={pad - 5} y={pad - 9} textAnchor="start" className="graph-y-label">+{range.toFixed(1)}</text>
         <text x={pad - 5} y={height - pad + 15} textAnchor="start" className="graph-y-label">−{range.toFixed(1)}</text>
-        <polyline points={line} className="graph-line" />
-        {values.map((value, index) => (
-          <circle key={index} cx={x(index)} cy={y(value)} r={index === currentMove ? 5 : 2.4}
-            className={index === currentMove ? "graph-point current" : "graph-point"}
-            role="button" tabIndex={0} aria-label={index === 0 ? "Start position" : `Move ${index}`}
-            onClick={() => onSelectMove(index)} onKeyDown={(event) => event.key === "Enter" && onSelectMove(index)}>
-            <title>{index === 0 ? "Start position" : `After move ${index}`} · {value >= 0 ? `White +${value.toFixed(2)}` : `Black +${Math.abs(value).toFixed(2)}`} pawns</title>
-          </circle>
-        ))}
       </svg>
       <div className="graph-axis"><span>Start</span><span>Move {points.length - 1}</span></div>
     </div>
