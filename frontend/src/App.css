@@ -415,3 +415,12 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .game-rating-baseline,.game-rating-loss { overflow: hidden; color: #8d998e; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .game-rating-note { margin: 8px 1px; color: #829084; font-size: 12px; line-height: 1.55; }
 @media (max-width: 560px) { .game-rating-card { min-height: 98px; padding: 9px; } .game-rating-card strong { font-size: 26px; } }
+
+.board-heading-tools { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.board-flip-control { min-height: 44px; padding: 0 12px; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 7px; border: 1px solid #ffffff18; border-radius: 12px; color: #c4cec2; background: #ffffff08; font: 600 12px 'Space Grotesk',sans-serif; cursor: pointer; transition: transform .18s,border-color .18s,color .18s,background .18s,box-shadow .18s; }
+.board-flip-control svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; transition: transform .3s ease; }
+.board-flip-control:hover { transform: translateY(-2px); border-color: #bbf36b56; color: var(--accent); background: #bbf36b0b; box-shadow: 0 5px 18px #bbf36b12; }
+.board-flip-control:active { transform: scale(.97); }
+.board-flip-control[aria-pressed="true"] svg { transform: rotate(180deg); }
+.board-flip-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 560px) { .board-heading { align-items: flex-start; } .board-heading-tools { flex-direction: column-reverse; align-items: flex-end; gap: 5px; } .board-flip-control { min-height: 44px; padding-inline: 9px; } .board-heading-tools .engine-pill { max-width: 150px; } }

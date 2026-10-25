@@ -133,6 +133,22 @@ function GameRatingCard({ side, estimate }) {
   );
 }
 
+function PlayerRail({ color, position, player, edgeLabel }) {
+  const isWhite = color === "w";
+  const sideName = isWhite ? "White" : "Black";
+  return (
+    <div className={`player-rail player-rail-${position}`}>
+      <span className="player-avatar" aria-hidden="true">{isWhite ? "♔" : "♚"}</span>
+      <span className="player-identity">
+        <b>{player.name}</b>
+        <span className="player-meta"><small>PLAYER</small><em className="elo-chip">{player.elo || "—"}</em>{player.title && <em className="player-title-chip">{player.title}</em>}</span>
+        <em className="captured-material" aria-label={`${sideName} captured ${player.captured.length} pieces`}>{player.captured.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em>
+      </span>
+      <i className="player-edge-label">{edgeLabel}</i>
+    </div>
+  );
+}
+
 const QualityIcon = ({ quality, size = 34 }) => {
   const qualityStyle = getQualityStyle(quality);
   if (!qualityStyle) return null;
@@ -309,6 +325,7 @@ function App() {
   const [moveHistory, setMoveHistory] = useState([]);
   const [uciMoveHistory, setUciMoveHistory] = useState([]);
   const [currentMove, setCurrentMove] = useState(0);
+  const [boardOrientation, setBoardOrientation] = useState("white");
 
   const [engineReady, setEngineReady] = useState(false);
   const [engineStatus, setEngineStatus] = useState("Loading Stockfish...");
@@ -339,6 +356,21 @@ function App() {
 
   const fen = fenHistory[currentMove] || START_FEN;
   const boardFen = fenHistory[previewMove ?? currentMove] || fen;
+  const topPlayerColor = boardOrientation === "white" ? "b" : "w";
+  const bottomPlayerColor = topPlayerColor === "w" ? "b" : "w";
+  const getPlayerDetails = (color) => color === "w"
+    ? { name: gameInfo?.white || "White", elo: gameInfo?.whiteElo, title: gameInfo?.whiteTitle, captured: capturedPieces.w || [] }
+    : { name: gameInfo?.black || "Black", elo: gameInfo?.blackElo, title: gameInfo?.blackTitle, captured: capturedPieces.b || [] };
+  const getPlayerEdgeLabel = (color) => {
+    if (!evaluation) return color === "w" ? "WHITE" : "BLACK";
+    if (evaluation.type === "mate") {
+      const matingSide = evaluation.value >= 0 ? "w" : "b";
+      return matingSide === color ? `MATE IN ${Math.abs(evaluation.value)}` : color === "w" ? "WHITE" : "BLACK";
+    }
+    const leadingSide = evaluation.value > 0 ? "w" : evaluation.value < 0 ? "b" : null;
+    if (leadingSide !== color) return color === "w" ? "WHITE" : "BLACK";
+    return `LEADS +${Math.abs(evaluation.value / 100).toFixed(2)}`;
+  };
 
   useEffect(() => {
     const closeSearch = (event) => {
@@ -1254,6 +1286,7 @@ function App() {
   const chessboardOptions = useMemo(
     () => ({
       position: boardFen,
+      boardOrientation,
       animationDurationInMs: 250,
       arrows: previewMove === null && bestMove && /^[a-h][1-8][a-h][1-8]/.test(bestMove)
         ? [{ startSquare: bestMove.slice(0, 2), endSquare: bestMove.slice(2, 4), color: "rgba(191,255,86,.78)" }]
@@ -1290,7 +1323,7 @@ function App() {
       lightSquareStyle: { backgroundColor: "#dce8e4" },
       darkSquareStyle: { backgroundColor: "#627d7a" },
     }),
-    [fen, boardFen, retryMoveIndex, fullReview, bestMove, uciMoveHistory, previewMove, currentMove]
+    [fen, boardFen, boardOrientation, retryMoveIndex, fullReview, bestMove, uciMoveHistory, previewMove, currentMove]
   );
 
   return (
@@ -1403,9 +1436,22 @@ function App() {
                 <p className="eyebrow">BOARD · MOVE {currentMove}</p>
                 <h2>{getCurrentGameMove()}</h2>
               </div>
-              <span className={`engine-pill ${engineReady ? "is-ready" : ""}`}>
-                <span className="status-dot" /> {engineStatus}{engineDepth ? ` · depth ${engineDepth}` : ""}
-              </span>
+              <div className="board-heading-tools">
+                <button
+                  className="board-flip-control"
+                  type="button"
+                  onClick={() => setBoardOrientation((orientation) => orientation === "white" ? "black" : "white")}
+                  aria-label={`Flip board to ${boardOrientation === "white" ? "Black" : "White"}’s perspective`}
+                  title={`Flip board to ${boardOrientation === "white" ? "Black" : "White"}’s perspective`}
+                  aria-pressed={boardOrientation === "black"}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v5m0 0H2m5 0 3-3M17 21v-5m0 0h5m-5 0 3 3M6.2 8.8a7 7 0 0 1 11.6-2.4L20 8.5M17.8 15.2a7 7 0 0 1-11.6 2.4L4 15.5" /></svg>
+                  <span>Flip board</span>
+                </button>
+                <span className={`engine-pill ${engineReady ? "is-ready" : ""}`}>
+                  <span className="status-dot" /> {engineStatus}{engineDepth ? ` · depth ${engineDepth}` : ""}
+                </span>
+              </div>
             </div>
             {retryMoveIndex !== null && (
               <div className={`retry-banner ${retryFeedback}`} role="status">
@@ -1413,15 +1459,7 @@ function App() {
                 <button onClick={() => { setRetryMoveIndex(null); setRetryFeedback(""); }}>Exit retry</button>
               </div>
             )}
-            <div className="player-rail player-rail-top">
-              <span className="player-avatar" aria-hidden="true">♚</span>
-              <span className="player-identity">
-                <b>{gameInfo?.black || "Black"}</b>
-                <span className="player-meta"><small>PLAYER</small><em className="elo-chip">{gameInfo?.blackElo || "—"}</em>{gameInfo?.blackTitle && <em className="player-title-chip">{gameInfo.blackTitle}</em>}</span>
-                <em className="captured-material" aria-label={`Black captured ${capturedPieces.b.length} pieces`}>{capturedPieces.b.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em>
-              </span>
-              <i className="player-edge-label">{evaluation?.value < 0 ? `LEADS ${formatEvaluation(evaluation)}` : "BLACK"}</i>
-            </div>
+            <PlayerRail color={topPlayerColor} position="top" player={getPlayerDetails(topPlayerColor)} edgeLabel={getPlayerEdgeLabel(topPlayerColor)} />
             <div className="board-stage">
               <div className="evaluation-rail" aria-label={`Evaluation ${formatEvaluation(evaluation)}`}>
                 <span className="eval-rail-value">{formatEvaluation(evaluation)}</span>
@@ -1435,15 +1473,7 @@ function App() {
                 {previewMove !== null && <span className="preview-ribbon">PREVIEW · MOVE {previewMove}</span>}
               </div>
             </div>
-            <div className="player-rail player-rail-bottom">
-              <span className="player-avatar" aria-hidden="true">♔</span>
-              <span className="player-identity">
-                <b>{gameInfo?.white || "White"}</b>
-                <span className="player-meta"><small>PLAYER</small><em className="elo-chip">{gameInfo?.whiteElo || "—"}</em>{gameInfo?.whiteTitle && <em className="player-title-chip">{gameInfo.whiteTitle}</em>}</span>
-                <em className="captured-material" aria-label={`White captured ${capturedPieces.w.length} pieces`}>{capturedPieces.w.map((piece, index) => <i key={`${piece}-${index}`}>{CAPTURED_PIECE_ICONS[piece]}</i>)}</em>
-              </span>
-              <i className="player-edge-label">{evaluation?.value > 0 ? `LEADS ${formatEvaluation(evaluation)}` : "WHITE"}</i>
-            </div>
+            <PlayerRail color={bottomPlayerColor} position="bottom" player={getPlayerDetails(bottomPlayerColor)} edgeLabel={getPlayerEdgeLabel(bottomPlayerColor)} />
             <div className="board-navigation">
               <button onClick={() => jumpToMove(0)} disabled={currentMove === 0} aria-label="First move">|◀</button>
               <button onClick={previousMove} disabled={currentMove === 0} aria-label="Previous move">◀</button>
