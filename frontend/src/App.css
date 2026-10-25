@@ -153,8 +153,8 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .white-dot { background: var(--accent); box-shadow: 0 0 8px #bbf36b70; }
 .black-dot { background: #78877b; }
 .eval-graph { width: 100%; height: auto; display: block; margin-top: 8px; overflow: visible; }
-.graph-white-area { fill: #bbf36b0a; }
-.graph-black-area { fill: #c0cabe08; }
+.graph-white-area { fill: #fff; }
+.graph-black-area { fill: #000; }
 .graph-zero { stroke: #72807488; stroke-width: 1; stroke-dasharray: 3 5; }
 .graph-line { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px #bbf36b77); }
 .graph-point { fill: #869387; stroke: #111713; stroke-width: 1.2; cursor: pointer; vector-effect: non-scaling-stroke; transition: r .18s,fill .18s; }
@@ -266,8 +266,9 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .move-list { max-height: min(48vh,470px); display: grid; align-content: start; gap: 4px; overflow: auto; padding: 1px 4px 2px 0; scrollbar-color: #3f4a40 transparent; scrollbar-width: thin; }
 .move-pair { min-height: 38px; }
 .move-number { color: #7e8b80; font: 10px 'Space Grotesk',sans-serif; font-variant-numeric: tabular-nums; text-align: center; }
-.move-item { min-width: 0; min-height: 36px; width: 100%; padding: 4px 8px; display: flex; align-items: center; justify-content: space-between; gap: 5px; border: 1px solid transparent; border-radius: 10px; color: #bec8bd; background: #ffffff04; font: 500 11px 'Space Grotesk',sans-serif; text-align: left; cursor: pointer; transition: transform .16s,border-color .16s,color .16s,background .16s; }
+.move-item { min-width: 0; min-height: 36px; width: fit-content; max-width: 100%; padding: 4px 8px; display: flex; align-items: center; justify-content: flex-start; gap: 9px; border: 1px solid transparent; border-radius: 10px; color: #bec8bd; background: #ffffff04; font: 500 11px 'Space Grotesk',sans-serif; text-align: left; cursor: pointer; transition: transform .16s,border-color .16s,color .16s,background .16s; }
 .move-item>span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.move-item>span:last-child { flex: 0 0 auto; }
 .move-san-number { margin-right: 5px; color: #79867a; font-size: 9px; }
 .move-item:hover { transform: translateX(2px); border-color: #ffffff1b; color: #f3f7ee; background: #ffffff0b; }
 .move-item.is-selected { border-color: #bbf36b64; color: #ecffd7; background: #bbf36b14; box-shadow: inset 2px 0 var(--accent),0 0 20px #bbf36b08; }
