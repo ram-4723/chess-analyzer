@@ -435,3 +435,13 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .best-line-disclosure .best-line { margin: 0; padding: 0 11px 11px; display: block; border-top: 1px solid #ffffff12; }
 .best-line-disclosure:focus-within { border-color: #bbf36b56; }
 .best-line-disclosure summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+
+.engine-top-move { width: 100%; padding: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; border: 1px solid transparent; border-radius: 10px; color: inherit; background: transparent; text-align: left; cursor: pointer; transition: padding .18s,border-color .18s,background .18s,transform .18s; }
+.engine-top-move>span { color: #aeb9ae; font-size: 14px; font-weight: 700; }
+.engine-top-move strong { color: #edf2e9; font: 700 19px/1.3 'Space Grotesk',sans-serif; }
+.engine-top-move small { color: #859186; font-size: 12px; }
+.engine-top-move:hover:not(:disabled) strong,.engine-top-move:hover:not(:disabled) small { color: var(--accent); }
+.engine-top-move.is-previewing { padding: 8px 10px; border-color: #bbf36b38; background: #bbf36b0a; }
+.engine-top-move:disabled { opacity: .65; cursor: default; }
+.engine-top-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.engine-preview-ribbon { border-color: #bbf36b66; color: var(--accent); background: #111710e8; }

@@ -347,6 +347,7 @@ function App() {
   const [retryFeedback, setRetryFeedback] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [previewMove, setPreviewMove] = useState(null);
+  const [engineMovePreview, setEngineMovePreview] = useState(null);
   const selectedMoveRef = useRef(null);
   const reviewRunRef = useRef(0);
   const searchRef = useRef(null);
@@ -355,7 +356,8 @@ function App() {
   const fenRef = useRef(START_FEN);
 
   const fen = fenHistory[currentMove] || START_FEN;
-  const boardFen = fenHistory[previewMove ?? currentMove] || fen;
+  const isEngineMovePreview = engineMovePreview?.baseFen === fen;
+  const boardFen = isEngineMovePreview ? engineMovePreview.fen : fenHistory[previewMove ?? currentMove] || fen;
   const topPlayerColor = boardOrientation === "white" ? "b" : "w";
   const bottomPlayerColor = topPlayerColor === "w" ? "b" : "w";
   const getPlayerDetails = (color) => color === "w"
@@ -396,6 +398,7 @@ function App() {
   }, [fen]);
 
   const resetAnalysis = () => {
+    setEngineMovePreview(null);
     setEvaluation(null);
     setBestMove(null);
     setBestLine([]);
@@ -517,6 +520,24 @@ function App() {
   const jumpToMove = (moveIndex) => {
     setCurrentMove(Math.max(0, Math.min(moveIndex, fenHistory.length - 1)));
     setPreviewMove(null);
+    setEngineMovePreview(null);
+  };
+
+  const toggleEngineMovePreview = () => {
+    if (isEngineMovePreview && engineMovePreview.uci === bestMove) {
+      setEngineMovePreview(null);
+      return;
+    }
+    if (!bestMove || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(bestMove)) return;
+    try {
+      const position = new Chess(fen);
+      const move = position.move({ from: bestMove.slice(0, 2), to: bestMove.slice(2, 4), promotion: bestMove[4] || "q" });
+      if (!move) return;
+      setPreviewMove(null);
+      setEngineMovePreview({ baseFen: fen, fen: position.fen(), from: move.from, to: move.to, san: move.san, uci: bestMove });
+    } catch {
+      setEngineMovePreview(null);
+    }
   };
 
   useEffect(() => {
@@ -546,6 +567,7 @@ function App() {
   }, [fenHistory.length]);
 
   useEffect(() => {
+    setEngineMovePreview(null);
     selectedMoveRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [currentMove]);
 
@@ -1057,7 +1079,7 @@ function App() {
   };
 
   const getCurrentMoveIconOverlay = () => {
-    if (retryMoveIndex !== null || currentMove === 0 || !moveQuality || moveQuality === "Checking...") {
+    if (isEngineMovePreview || retryMoveIndex !== null || currentMove === 0 || !moveQuality || moveQuality === "Checking...") {
       return null;
     }
 
@@ -1288,12 +1310,14 @@ function App() {
       position: boardFen,
       boardOrientation,
       animationDurationInMs: 250,
-      arrows: previewMove === null && bestMove && /^[a-h][1-8][a-h][1-8]/.test(bestMove)
+      arrows: previewMove === null && !isEngineMovePreview && bestMove && /^[a-h][1-8][a-h][1-8]/.test(bestMove)
         ? [{ startSquare: bestMove.slice(0, 2), endSquare: bestMove.slice(2, 4), color: "rgba(191,255,86,.78)" }]
         : [],
       squareStyles: (() => {
         const styles = {};
-        const lastMove = uciMoveHistory[(previewMove ?? currentMove) - 1];
+        const lastMove = isEngineMovePreview
+          ? `${engineMovePreview.from}${engineMovePreview.to}`
+          : uciMoveHistory[(previewMove ?? currentMove) - 1];
         if (lastMove) {
           styles[lastMove.slice(0, 2)] = { boxShadow: "inset 0 0 0 3px rgba(191,255,86,.75)" };
           styles[lastMove.slice(2, 4)] = { boxShadow: "inset 0 0 0 3px rgba(191,255,86,.9)", backgroundColor: "rgba(191,255,86,.22)" };
@@ -1323,7 +1347,7 @@ function App() {
       lightSquareStyle: { backgroundColor: "#dce8e4" },
       darkSquareStyle: { backgroundColor: "#627d7a" },
     }),
-    [fen, boardFen, boardOrientation, retryMoveIndex, fullReview, bestMove, uciMoveHistory, previewMove, currentMove]
+    [fen, boardFen, boardOrientation, retryMoveIndex, fullReview, bestMove, uciMoveHistory, previewMove, currentMove, isEngineMovePreview, engineMovePreview]
   );
 
   return (
@@ -1471,6 +1495,7 @@ function App() {
                 <Chessboard options={chessboardOptions} />
                 {getCurrentMoveIconOverlay()}
                 {previewMove !== null && <span className="preview-ribbon">PREVIEW · MOVE {previewMove}</span>}
+                {isEngineMovePreview && <span className="preview-ribbon engine-preview-ribbon">ENGINE MOVE · {engineMovePreview.san}</span>}
               </div>
             </div>
             <PlayerRail color={bottomPlayerColor} position="bottom" player={getPlayerDetails(bottomPlayerColor)} edgeLabel={getPlayerEdgeLabel(bottomPlayerColor)} />
@@ -1506,7 +1531,18 @@ function App() {
             </div>
 
             <div className="recommendation-list">
-              <div><span>ENGINE’S TOP MOVE</span><strong>{getBestMoveSan(bestMove)}</strong></div>
+              <button
+                className={`engine-top-move ${isEngineMovePreview && engineMovePreview.uci === bestMove ? "is-previewing" : ""}`}
+                type="button"
+                onClick={toggleEngineMovePreview}
+                disabled={!bestMove || bestMove === "(none)"}
+                aria-pressed={isEngineMovePreview && engineMovePreview.uci === bestMove}
+                aria-label={isEngineMovePreview && engineMovePreview.uci === bestMove ? "Return to the current game position" : `Preview Stockfish's suggested move ${getBestMoveSan(bestMove)} on the board`}
+              >
+                <span>ENGINE’S TOP MOVE</span>
+                <strong>{getBestMoveSan(bestMove)}</strong>
+                <small>{isEngineMovePreview && engineMovePreview.uci === bestMove ? "Showing on board · click to return" : "Click to preview on board"}</small>
+              </button>
               <details className="best-line-disclosure">
                 <summary>
                   <span>BEST LINE</span>
@@ -1632,7 +1668,7 @@ function App() {
                           className={`move-item ${selected ? "is-selected" : ""} ${index % 2 ? "black-move" : "white-move"}`}
                           key={`${index}-${moveHistory[index]}`}
                           onClick={() => jumpToMove(index + 1)}
-                          onMouseEnter={() => setPreviewMove(index + 1)}
+                          onMouseEnter={() => { setEngineMovePreview(null); setPreviewMove(index + 1); }}
                           onMouseLeave={() => setPreviewMove(null)}
                           ref={selected ? selectedMoveRef : undefined}
                           title={`${Math.floor(index / 2) + 1}${index % 2 ? "..." : "."} ${moveHistory[index]}${review ? ` · ${review.quality}` : ""}`}
