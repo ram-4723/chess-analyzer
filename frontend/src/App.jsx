@@ -279,7 +279,7 @@ const QualityIcon = ({ quality, size = 34 }) => {
 };
 
 function App() {
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState("GukeshDommaraju");
   const [games, setGames] = useState([]);
   const [gamesOpen, setGamesOpen] = useState(false);
   const [gamesLoading, setGamesLoading] = useState(false);
