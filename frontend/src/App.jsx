@@ -31,7 +31,7 @@ const QUALITY_STYLES = {
 
 const getQualityStyle = (quality) => QUALITY_STYLES[quality] || null;
 
-const ACCURACY_LABEL = "Estimated accuracy";
+const ACCURACY_LABEL = "Estimated move accuracy";
 const WIN_PERCENT_SLOPE = 0.00368208;
 // A small transparent opening book for common first moves. Unmatched moves
 // are scored normally; this avoids calling arbitrary early moves “book”.
@@ -49,8 +49,8 @@ function EvaluationGraph({ points, currentMove, onSelectMove }) {
     return <div className="graph-empty">Run a full review to see the game’s evaluation trend.</div>;
   }
   const width = 600;
-  const height = 160;
-  const pad = 12;
+  const height = 220;
+  const pad = 18;
   const values = points.map((point) => Math.max(-900, Math.min(900, point / 100)));
   const x = (index) => pad + (points.length < 2 ? 0 : (index / (points.length - 1)) * (width - pad * 2));
   const y = (value) => pad + ((4.5 - value) / 9) * (height - pad * 2);
@@ -72,6 +72,21 @@ function EvaluationGraph({ points, currentMove, onSelectMove }) {
         ))}
       </svg>
       <div className="graph-axis"><span>Start</span><span>Move {points.length - 1}</span></div>
+    </div>
+  );
+}
+
+function AccuracyCard({ side, accuracy }) {
+  const percentage = accuracy?.percentage ?? null;
+  const colorClass = side === "White" ? "white-accuracy" : "black-accuracy";
+  return (
+    <div className={`accuracy-card ${colorClass}`}>
+      <span>{side} · {ACCURACY_LABEL}</span>
+      <strong>{percentage ?? "—"}{percentage !== null && <small>%</small>}</strong>
+      <div className="accuracy-meter" role="progressbar" aria-label={`${side} estimated move accuracy`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={percentage ?? 0}>
+        <i style={{ width: `${percentage ?? 0}%` }} />
+      </div>
+      <small className="accuracy-detail">{accuracy ? `${accuracy.bestMatches} exact top moves · ${accuracy.total} moves scored` : "No moves to score"}</small>
     </div>
   );
 }
@@ -500,18 +515,6 @@ function App() {
     return 1 / (1 + Math.exp(-WIN_PERCENT_SLOPE * boundedCp));
   };
 
-  const winPercentFromWhiteCp = (whiteCp) => {
-    const boundedCp = Math.max(-3000, Math.min(3000, whiteCp));
-    return 100 / (1 + Math.exp(-WIN_PERCENT_SLOPE * boundedCp));
-  };
-
-  const accuracyForWinPercentLoss = (loss) => {
-    if (loss <= 0) return 100;
-    // Public Lichess move-accuracy curve; Chess.com's CAPS2 curve is private.
-    const raw = 103.1668100711649 * Math.exp(-0.04354415386753951 * loss) - 3.166924740191411 + 1;
-    return Math.max(0, Math.min(100, raw));
-  };
-
   const classifyExpectedPointsLoss = (loss, playedBestMove) => {
     // Chess.com publicly documents these Expected Points V2 bands.
     // WDL is rounded, so only Stockfish's actual top move earns “Best”.
@@ -523,30 +526,13 @@ function App() {
     return "Blunder";
   };
 
-  const estimateAccuracy = (reviews, color, whiteWinPercents) => {
+  const calculateMoveAccuracy = (reviews, color) => {
     const sideReviews = reviews.filter((review) => review.color === color);
     if (!sideReviews.length) return null;
-
-    // Like Lichess's published game score, combine a volatility-weighted mean
-    // with the harmonic mean so one large error is not hidden by many easy moves.
-    const plyCount = Math.max(0, whiteWinPercents.length - 1);
-    const windowSize = Math.max(2, Math.min(8, Math.floor(plyCount / 10)));
-    const firstWindow = whiteWinPercents.slice(0, windowSize);
-    const windows = [
-      ...Array(Math.max(0, Math.min(windowSize, whiteWinPercents.length) - 2)).fill(firstWindow),
-      ...Array.from({ length: Math.max(0, whiteWinPercents.length - windowSize + 1) }, (_, start) => whiteWinPercents.slice(start, start + windowSize)),
-    ].slice(0, plyCount);
-    const scored = sideReviews.map((review) => {
-      const samples = windows[review.index] || firstWindow;
-      const mean = samples.reduce((sum, value) => sum + value, 0) / Math.max(1, samples.length);
-      const variance = samples.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, samples.length);
-      const weight = Math.max(0.5, Math.min(12, Math.sqrt(variance)));
-      return { accuracy: review.accuracy, weight };
-    });
-    const weightTotal = scored.reduce((sum, item) => sum + item.weight, 0);
-    const weightedMean = scored.reduce((sum, item) => sum + item.accuracy * item.weight, 0) / weightTotal;
-    const harmonicMean = scored.length / scored.reduce((sum, item) => sum + 1 / Math.max(item.accuracy, 0.01), 0);
-    return Math.round((weightedMean + harmonicMean) / 2);
+    const moveScores = sideReviews.map((review) => 100 * Math.exp(-6 * Math.max(0, review.expectedPointsLoss || 0)));
+    const percentage = Math.round(moveScores.reduce((sum, score) => sum + score, 0) / moveScores.length);
+    const bestMatches = sideReviews.filter((review) => review.bestMove && review.playedMove === review.bestMove).length;
+    return { percentage, bestMatches, total: sideReviews.length };
   };
 
   const materialBalanceFor = (chess, color) => chess.board().flat().reduce((balance, piece) => {
@@ -742,7 +728,6 @@ function App() {
     setFullReview(null);
     const results = [];
     const positions = [];
-    const whiteWinPercents = [];
     let initialWhite = 0;
     try {
       for (let index = 0; index < uciMoveHistory.length; index += 1) {
@@ -792,21 +777,16 @@ function App() {
         else if (brilliant) quality = "Brilliant";
         else if (great) quality = "Great";
         else if (cpLoss >= 300 && playedExpectedPoints >= 0.5) quality = "Miss";
-        const winBefore = winPercentFromWhiteCp(mover === "w" ? bestWhite : -bestWhite);
-        const winAfter = winPercentFromWhiteCp(mover === "w" ? playedWhite : -playedWhite);
-        const moveAccuracy = accuracyForWinPercentLoss(Math.max(0, winBefore - winAfter));
-        const review = { index, color: mover, quality, evalLoss: cpLoss, expectedPointsLoss, accuracy: moveAccuracy, winBefore, winAfter, bestMove: before.bestMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
+        const review = { index, color: mover, quality, evalLoss: cpLoss, expectedPointsLoss, bestMove: before.bestMove, playedMove, bestLine: before.bestMove || null, bestWhite, playedWhite };
         results.push(review);
         positions.push(playedWhite);
-        if (index === 0) whiteWinPercents.push(winPercentFromWhiteCp(initialWhite));
-        whiteWinPercents.push(winPercentFromWhiteCp(playedWhite));
         setMoveReviews((existing) => ({ ...existing, [index]: review }));
         setReviewState({ status: "running", completed: index + 1, total: uciMoveHistory.length });
       }
       if (reviewRunRef.current !== runId) return;
       const allPoints = [initialWhite, ...positions];
       const moments = results.filter((item) => ["Brilliant", "Great", "Miss", "Inaccuracy", "Mistake", "Blunder"].includes(item.quality));
-      setFullReview({ moves: results, points: allPoints, whiteAccuracy: estimateAccuracy(results, "w", whiteWinPercents), blackAccuracy: estimateAccuracy(results, "b", whiteWinPercents), moments });
+      setFullReview({ moves: results, points: allPoints, whiteAccuracy: calculateMoveAccuracy(results, "w"), blackAccuracy: calculateMoveAccuracy(results, "b"), moments });
       setReviewState({ status: "complete", completed: uciMoveHistory.length, total: uciMoveHistory.length });
     } catch (error) {
       console.error("Full game review failed:", error);
@@ -1249,26 +1229,32 @@ function App() {
               <div className="fact-card"><span>Side to move</span><strong>{getSideToMove()}</strong></div>
               <div className="fact-card"><span>Eval loss</span><strong>{evalLoss === null ? "—" : `${(evalLoss / 100).toFixed(2)} pawns`}</strong></div>
               <div className="fact-card"><span>Expected points lost</span><strong>{expectedPointLoss === null ? "—" : expectedPointLoss.toFixed(2)}</strong></div>
-              <div className="fact-card"><span>Search depth</span><strong>{engineDepth || "—"}</strong></div>
             </div>
 
-            <label className="depth-control">
-              <span>Analysis depth</span>
-              <select
-                value={analysisDepth}
-                onChange={(event) => {
-                  if (reviewState.status === "running") cancelFullReview();
-                  setMoveReviews({});
-                  setFullReview(null);
-                  setAnalysisDepth(Number(event.target.value));
-                }}
-              >
-                <option value={8}>Fast · 8</option>
-                <option value={12}>Normal · 12</option>
-                <option value={16}>Deep · 16</option>
-                <option value={20}>Very deep · 20 (slower)</option>
-              </select>
-            </label>
+            <details className="settings-disclosure">
+              <summary><span>Analysis settings</span><b>Depth {analysisDepth} <i>·</i> Stockfish</b></summary>
+              <div className="settings-fields">
+                <label className="depth-control" htmlFor="analysis-depth">
+                  <span>Search depth</span>
+                  <select
+                    id="analysis-depth"
+                    value={analysisDepth}
+                    onChange={(event) => {
+                      if (reviewState.status === "running") cancelFullReview();
+                      setMoveReviews({});
+                      setFullReview(null);
+                      setAnalysisDepth(Number(event.target.value));
+                    }}
+                  >
+                    <option value={8}>Fast · 8</option>
+                    <option value={12}>Balanced · 12</option>
+                    <option value={16}>Deep · 16</option>
+                    <option value={20}>Very deep · 20 (slower)</option>
+                  </select>
+                </label>
+                <p>Higher depth takes longer and may find stronger lines.</p>
+              </div>
+            </details>
 
             <div className="recommendation-list">
               <div><span>Best move</span><strong>{getBestMoveSan(bestMove)}</strong></div>
@@ -1302,10 +1288,10 @@ function App() {
             {fullReview ? (
               <>
                 <div className="accuracy-grid">
-                  <div className="accuracy-card white-accuracy"><span>White · {ACCURACY_LABEL}</span><strong>{fullReview.whiteAccuracy ?? "—"}{fullReview.whiteAccuracy !== null && <small>%</small>}</strong><div className="accuracy-meter" role="progressbar" aria-label="White estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.whiteAccuracy ?? 0}><i style={{ width: `${fullReview.whiteAccuracy ?? 0}%` }} /></div></div>
-                  <div className="accuracy-card black-accuracy"><span>Black · {ACCURACY_LABEL}</span><strong>{fullReview.blackAccuracy ?? "—"}{fullReview.blackAccuracy !== null && <small>%</small>}</strong><div className="accuracy-meter black-meter" role="progressbar" aria-label="Black estimated accuracy" aria-valuemin="0" aria-valuemax="100" aria-valuenow={fullReview.blackAccuracy ?? 0}><i style={{ width: `${fullReview.blackAccuracy ?? 0}%` }} /></div></div>
+                  <AccuracyCard side="White" accuracy={fullReview.whiteAccuracy} />
+                  <AccuracyCard side="Black" accuracy={fullReview.blackAccuracy} />
                 </div>
-                <p className="accuracy-note">Position-sensitive estimate using Stockfish evaluations and the published Lichess game-accuracy method. Chess.com’s CAPS2 formula is private.</p>
+                <p className="accuracy-note">Moves close to Stockfish’s best line earn partial credit; larger expected-point losses reduce the score. Exact top-move matches are shown below each score.</p>
                 <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
                 <div className="review-section-heading"><h3>Move breakdown</h3><span>{fullReview.moves.length} analyzed</span></div>
