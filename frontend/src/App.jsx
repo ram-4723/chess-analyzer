@@ -1109,8 +1109,8 @@ function App() {
         height: "100%",
         borderRadius: "6px",
       },
-      lightSquareStyle: { backgroundColor: "#a9b391" },
-      darkSquareStyle: { backgroundColor: "#58634f" },
+      lightSquareStyle: { backgroundColor: "#dce8e4" },
+      darkSquareStyle: { backgroundColor: "#627d7a" },
     }),
     [fen, retryMoveIndex, fullReview]
   );
