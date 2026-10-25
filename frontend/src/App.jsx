@@ -118,6 +118,21 @@ function AccuracyCard({ side, accuracy }) {
   );
 }
 
+function GameRatingCard({ side, estimate }) {
+  const adjustment = estimate?.adjustment ?? 0;
+  const adjustmentLabel = adjustment >= 0 ? `+${adjustment}` : `${adjustment}`;
+  return (
+    <div className={`game-rating-card ${side.toLowerCase()}`}>
+      <span className="game-rating-side">{side}</span>
+      <strong>{estimate ? estimate.rating.toLocaleString() : "—"}</strong>
+      <span className="game-rating-baseline">
+        {estimate ? `${estimate.baseline.toLocaleString()} Elo · ${adjustmentLabel}` : "Game Elo unavailable"}
+      </span>
+      {estimate && <span className="game-rating-loss">Avg. expected-point loss {(estimate.averageExpectedPointsLoss * 100).toFixed(1)}%</span>}
+    </div>
+  );
+}
+
 const QualityIcon = ({ quality, size = 34 }) => {
   const qualityStyle = getQualityStyle(quality);
   if (!qualityStyle) return null;
@@ -613,6 +628,22 @@ function App() {
     return { percentage: Math.round((topThreeMatches / sideReviews.length) * 100), topThreeMatches, total: sideReviews.length };
   };
 
+  const calculateGameRating = (reviews, color, baseElo) => {
+    const baseline = Number(baseElo);
+    if (!Number.isFinite(baseline) || baseline <= 0) return null;
+    const moves = reviews.filter((review) => review.color === color && Number.isFinite(review.expectedPointsLoss));
+    if (!moves.length) return null;
+
+    const averageExpectedPointsLoss = moves.reduce((total, review) => total + review.expectedPointsLoss, 0) / moves.length;
+    const adjustment = Math.max(-400, Math.min(200, Math.round((0.04 - averageExpectedPointsLoss) * 1600)));
+    return {
+      rating: Math.round(baseline) + adjustment,
+      baseline: Math.round(baseline),
+      adjustment,
+      averageExpectedPointsLoss,
+    };
+  };
+
   const materialBalanceFor = (chess, color) => chess.board().flat().reduce((balance, piece) => {
     if (!piece || piece.type === "k") return balance;
     const value = PIECE_VALUES[piece.type] || 0;
@@ -953,7 +984,15 @@ function App() {
       if (reviewRunRef.current !== runId) return;
       const allPoints = [initialWhite, ...positions];
       const moments = results.filter((item) => ["Brilliant", "Great", "Miss", "Inaccuracy", "Mistake", "Blunder"].includes(item.quality));
-      setFullReview({ moves: results, points: allPoints, whiteAccuracy: calculateMoveAccuracy(results, "w"), blackAccuracy: calculateMoveAccuracy(results, "b"), moments });
+      setFullReview({
+        moves: results,
+        points: allPoints,
+        whiteAccuracy: calculateMoveAccuracy(results, "w"),
+        blackAccuracy: calculateMoveAccuracy(results, "b"),
+        whiteGameRating: calculateGameRating(results, "w", gameInfo?.whiteElo),
+        blackGameRating: calculateGameRating(results, "b", gameInfo?.blackElo),
+        moments,
+      });
       setReviewState({ status: "complete", completed: uciMoveHistory.length, total: uciMoveHistory.length });
     } catch (error) {
       console.error("Full game review failed:", error);
@@ -1499,6 +1538,12 @@ function App() {
                   <AccuracyCard side="Black" accuracy={fullReview.blackAccuracy} />
                 </div>
                 <p className="accuracy-note">Calculation: top-three matches that preserve or improve mover evaluation ÷ all moves played × 100.</p>
+                <div className="review-section-heading game-rating-heading"><h3>Estimated game rating</h3><span>Performance this game</span></div>
+                <div className="game-rating-grid">
+                  <GameRatingCard side="White" estimate={fullReview.whiteGameRating} />
+                  <GameRatingCard side="Black" estimate={fullReview.blackGameRating} />
+                </div>
+                <p className="game-rating-note">Estimate = game Elo + clamp((4% − average expected-point loss) × 1,600, −400, +200). This app estimate is not Chess.com’s unpublished rating formula.</p>
                 <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
                 <details className="report-details">
