@@ -48,6 +48,13 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .search-game-players>span,.search-game-players small,.search-dropdown-message { color: var(--muted); font-size: 12px; }
 .search-game-players small { grid-column: 1/-1; }
 .search-game-result { display: flex; align-items: center; gap: 9px; color: #b9c1b9; font-size: 12px; }
+.result-badge { display: grid; width: 24px; height: 24px; flex: 0 0 24px; place-items: center; border-radius: 7px; color: #fff; font-size: 16px; font-weight: 800; line-height: 1; }
+.result-win .result-badge { background: #278449; box-shadow: 0 3px 10px #27844966; }
+.result-loss .result-badge { background: #be454b; box-shadow: 0 3px 10px #be454b55; }
+.result-draw .result-badge { background: #68716c; box-shadow: 0 3px 10px #68716c44; }
+.result-rating { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.result-win .result-rating { color: #92e3a7; }
+.result-loss .result-rating { color: #f08e94; }
 .search-game-result b { color: var(--accent); font-size: 18px; }
 .search-dropdown-message { margin: 0; padding: 16px; line-height: 1.6; }
 .search-dropdown-error,.review-error { color: #ff9587; }

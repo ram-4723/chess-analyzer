@@ -1244,6 +1244,19 @@ function App() {
                     const whiteWon = game.white?.result === "win";
                     const blackWon = game.black?.result === "win";
                     const resultLabel = whiteWon ? "White won" : blackWon ? "Black won" : "Draw";
+                    const searchedUsername = username.trim().toLocaleLowerCase();
+                    const searchedPlayer = [game.white, game.black].find(
+                      (player) => player?.username?.toLocaleLowerCase() === searchedUsername
+                    );
+                    const resultOutcome = searchedPlayer?.result === "win"
+                      ? "win"
+                      : searchedPlayer && (whiteWon || blackWon) ? "loss" : "draw";
+                    const rawRatingChange = searchedPlayer?.rating_change ?? searchedPlayer?.ratingChange;
+                    const numericRatingChange = Number(rawRatingChange);
+                    const ratingChange = resultOutcome !== "draw" && rawRatingChange != null && Number.isFinite(numericRatingChange)
+                      ? `${resultOutcome === "loss" ? "−" : "+"}${Math.abs(numericRatingChange)}`
+                      : null;
+                    const resultTooltip = `${resultLabel}${ratingChange ? ` · ${ratingChange} rating` : ""}`;
                     const dateLabel = game.end_time ? new Date(game.end_time * 1000).toLocaleDateString() : game.time_class || "Game";
                     return (
                       <button
@@ -1260,7 +1273,7 @@ function App() {
                           <strong>{game.black?.username || "Black"}</strong>
                           <small>{dateLabel} · {game.time_class || "Game"}</small>
                         </span>
-                        <span className="search-game-result">{resultLabel}<b aria-hidden="true">→</b></span>
+                        <span className={`search-game-result result-${resultOutcome}`} title={resultTooltip} aria-label={resultTooltip}><span className="result-badge" aria-hidden="true">{resultOutcome === "win" ? "+" : resultOutcome === "loss" ? "−" : "="}</span>{ratingChange && resultOutcome !== "draw" && <span className="result-rating">{ratingChange}</span>}<b aria-hidden="true">→</b></span>
                       </button>
                     );
                   })}
