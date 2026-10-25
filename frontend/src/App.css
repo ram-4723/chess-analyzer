@@ -182,6 +182,87 @@ button:focus-visible,input:focus-visible,summary:focus-visible { outline: 2px so
 .move-list-head { margin: 0 0 6px; padding: 0 7px; color: #748176; font-size: 8px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .move-list-head span:not(:first-child) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 560px) { .move-list-head { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; padding-inline: 4px; } .move-list-head>span:first-child { display: none; } }
+
+/* Compact broadcast dashboard: keep the live board, move verdict, graph and score in view. */
+@media (min-width: 861px) {
+  .app-header { min-height: 76px; margin-bottom: 14px; padding-block: 10px; }
+  .review-layout { height: calc(100svh - 110px); min-height: 580px; align-items: stretch; gap: 18px; }
+  .board-card { height: 100%; padding: 15px; display: flex; flex-direction: column; }
+  .board-heading { margin-bottom: 7px; }
+  .player-rail { min-height: 34px; }
+  .player-rail-top { margin-bottom: 3px; }
+  .player-rail-bottom { margin-top: 3px; }
+  .board-stage { width: 100%; max-width: min(100%,calc(100svh - 350px)); grid-template-columns: 78px minmax(0,1fr); gap: 8px; flex: 0 1 auto; }
+  .evaluation-rail { gap: 5px; padding: 8px 5px; border-radius: 12px; }
+  .eval-rail-value { padding: 5px 4px; color: #192017; font-size: 11px; writing-mode: horizontal-tb; transform: none; }
+  .evaluation-track { width: 11px; min-height: 100px; }
+  .eval-rail-stat { width: 100%; display: grid; gap: 1px; justify-items: center; padding-top: 5px; border-top: 1px solid #ffffff20; }
+  .eval-rail-stat small { color: #78857a; font-size: 7px; font-weight: 800; letter-spacing: .08em; }
+  .eval-rail-stat b { color: #eef4e9; font: 600 10px 'Space Grotesk',sans-serif; font-variant-numeric: tabular-nums; }
+  .board-navigation { margin-top: 8px; }
+  .board-navigation button { width: 34px; height: 32px; }
+  .game-scrubber { margin-top: 8px; }
+  .results-column { height: 100%; max-height: 100%; min-height: 0; overflow-y: auto; align-content: start; gap: 9px; padding-right: 3px; scrollbar-color: #3b473c transparent; scrollbar-width: thin; }
+  .panel { padding: 13px; border-radius: 15px; }
+  .panel-heading { margin-bottom: 9px; }
+  .panel-heading h2 { font-size: 17px; }
+  .analysis-panel { padding-bottom: 11px; }
+  .quality-badge { padding: 4px 8px; }
+  .recommendation-list { margin-top: 0; padding-top: 0; display: grid; grid-template-columns: 112px minmax(0,1fr); gap: 10px; border: 0; }
+  .recommendation-list strong { font-size: 12px; }
+  .recommendation-list .best-line { font-size: 10px!important; line-height: 1.45!important; }
+  .settings-disclosure { margin-top: 8px; }
+  .settings-disclosure summary { min-height: 36px; padding: 7px 10px; }
+  .depth-meter { margin-top: 7px; gap: 3px 8px; }
+  .full-review-panel .review-subtitle { font-size: 9px; }
+  .review-actions .primary-button { min-height: 32px; }
+  .accuracy-grid { margin-top: 8px; gap: 7px; }
+  .accuracy-card { min-height: 70px; padding: 8px; grid-template-columns: minmax(0,1fr) 44px; }
+  .accuracy-card>span { font-size: 8px; }
+  .accuracy-card .accuracy-ring { width: 42px; height: 42px; }
+  .accuracy-ring::before { inset: 3px; }
+  .accuracy-ring strong { font-size: 13px; }
+  .accuracy-ring strong small { font-size: 8px; }
+  .accuracy-detail { font-size: 8px; }
+  .accuracy-note { margin: 5px 0; font-size: 8px; }
+  .review-section-heading { margin: 9px 0 5px; }
+  .eval-graph-wrap { padding: 8px; }
+  .eval-graph { margin-top: 4px; }
+  .graph-legend,.graph-axis { font-size: 8px; }
+  .graph-empty { padding: 12px; }
+  .report-details { margin-top: 8px; border-top: 1px solid #ffffff12; }
+  .report-details summary { padding: 9px 1px 2px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #b9c5b8; font-size: 10px; font-weight: 700; cursor: pointer; list-style: none; }
+  .report-details summary::-webkit-details-marker { display: none; }
+  .report-details summary::after { content: '+'; color: var(--accent); font-size: 16px; }
+  .report-details[open] summary::after { content: '−'; }
+  .report-details summary span { color: #778478; font-size: 8px; font-weight: 500; }
+  .moves-panel { padding: 11px; }
+  .moves-panel .panel-heading { margin-bottom: 5px; }
+  .move-list { max-height: 20svh; min-height: 118px; gap: 2px; }
+  .move-pair { min-height: 30px; }
+  .move-item { min-height: 28px; padding-block: 2px; font-size: 10px; }
+  .move-list-head { margin-bottom: 3px; }
+}
+@media (max-width: 860px) {
+  .board-stage { grid-template-columns: 66px minmax(0,1fr); }
+  .eval-rail-value { writing-mode: horizontal-tb; transform: none; padding: 4px 3px; color: #192017; font-size: 10px; }
+  .evaluation-rail { gap: 5px; }
+  .eval-rail-stat { width: 100%; display: grid; gap: 1px; justify-items: center; padding-top: 4px; border-top: 1px solid #ffffff20; }
+  .eval-rail-stat small { color: #78857a; font-size: 6px; font-weight: 800; }
+  .eval-rail-stat b { color: #eef4e9; font: 600 9px 'Space Grotesk',sans-serif; }
+  .recommendation-list { margin-top: 0; }
+}
+@media (max-height: 700px) and (min-width: 861px) {
+  .app-header { min-height: 64px; margin-bottom: 10px; }
+  .review-layout { height: calc(100svh - 86px); min-height: 520px; }
+  .board-stage { max-width: min(100%,calc(100svh - 315px)); }
+  .player-rail { min-height: 28px; }
+}
+@media (max-width: 560px) {
+  .board-stage { grid-template-columns: 56px minmax(0,1fr); }
+  .eval-rail-stat small { font-size: 5px; }
+  .eval-rail-stat b { font-size: 8px; }
+}
 .move-list { max-height: min(48vh,470px); display: grid; align-content: start; gap: 4px; overflow: auto; padding: 1px 4px 2px 0; scrollbar-color: #3f4a40 transparent; scrollbar-width: thin; }
 .move-pair { min-height: 38px; }
 .move-number { color: #7e8b80; font: 10px 'Space Grotesk',sans-serif; font-variant-numeric: tabular-nums; text-align: center; }

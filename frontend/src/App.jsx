@@ -475,10 +475,6 @@ function App() {
     selectedMoveRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [currentMove]);
 
-  const getSideToMove = () => {
-    return fen.split(" ")[1] === "w" ? "White" : "Black";
-  };
-
   const getCurrentGameMove = () => {
     if (currentMove === 0) return "Start position";
     return moveHistory[currentMove - 1] || "-";
@@ -1268,6 +1264,8 @@ function App() {
               <div className="evaluation-rail" aria-label={`Evaluation ${formatEvaluation(evaluation)}`}>
                 <span className="eval-rail-value">{formatEvaluation(evaluation)}</span>
                 <div className="evaluation-track"><i style={{ height: `${Math.max(8, Math.min(92, 50 + (evaluation?.type === "mate" ? Math.sign(evaluation.value) * 48 : (evaluation?.value || 0) / 24)))}%` }} /></div>
+                <span className="eval-rail-stat"><small>LOSS</small><b>{evalLoss === null ? "—" : `${(evalLoss / 100).toFixed(2)}`}</b></span>
+                <span className="eval-rail-stat"><small>PTS LOST</small><b>{expectedPointLoss === null ? "—" : expectedPointLoss.toFixed(2)}</b></span>
               </div>
               <div className="board-frame">
                 <Chessboard options={chessboardOptions} />
@@ -1307,15 +1305,13 @@ function App() {
               )}
             </div>
 
-            <div className="analysis-facts">
-              <div className="fact-card"><span>Evaluation</span><strong>{formatEvaluation(evaluation)}</strong></div>
-              <div className="fact-card"><span>Side to move</span><strong>{getSideToMove()}</strong></div>
-              <div className="fact-card"><span>Eval loss</span><strong>{evalLoss === null ? "—" : `${(evalLoss / 100).toFixed(2)} pawns`}</strong></div>
-              <div className="fact-card"><span>Expected points lost</span><strong>{expectedPointLoss === null ? "—" : expectedPointLoss.toFixed(2)}</strong></div>
+            <div className="recommendation-list">
+              <div><span>ENGINE’S TOP MOVE</span><strong>{getBestMoveSan(bestMove)}</strong></div>
+              <div><span>BEST LINE</span><strong className="best-line">{getBestLineSan()}</strong></div>
             </div>
 
             <details className="settings-disclosure">
-              <summary><span>Analysis settings</span><b>Depth {analysisDepth} <i>·</i> Stockfish</b></summary>
+              <summary><span>⚙ &nbsp;Engine settings</span><b>Depth {analysisDepth} <i>·</i> Stockfish</b></summary>
               <div className="settings-fields">
                 <label className="depth-control" htmlFor="analysis-depth">
                   <span>Search depth</span>
@@ -1339,10 +1335,6 @@ function App() {
               </div>
             </details>
 
-            <div className="recommendation-list">
-              <div><span>Best move</span><strong>{getBestMoveSan(bestMove)}</strong></div>
-              <div><span>Best line</span><strong className="best-line">{getBestLineSan()}</strong></div>
-            </div>
             <div className="depth-meter" aria-label={`Engine depth ${engineDepth || 0} of ${analysisDepth}`}><span>ENGINE DEPTH</span><b>{engineDepth || 0}<i> / {analysisDepth}</i></b><div><i style={{ width: `${Math.min(100, (engineDepth || 0) / analysisDepth * 100)}%` }} /></div></div>
           </section>
 
@@ -1378,26 +1370,28 @@ function App() {
                 <p className="accuracy-note">Calculation: exact moves matching Stockfish’s top choice ÷ all moves played × 100. Near-best moves are still good moves, but they do not count as exact top-move matches.</p>
                 <div className="review-section-heading"><h3>Game momentum</h3><span>White advantage ↑ · Black advantage ↓</span></div>
                 <EvaluationGraph points={fullReview.points} currentMove={currentMove} onSelectMove={jumpToMove} />
-                <div className="review-section-heading"><h3>Move breakdown</h3><span>{fullReview.moves.length} analyzed</span></div>
-                <p className="classification-note">Standard labels use expected-points-loss bands published by Chess.com. Special labels use engine-based app rules.</p>
-                <div className="quality-counts">
-                  {moveQualityCounts.map(({ quality, count }) => <span className="quality-count" key={quality}><QualityIcon quality={quality} size={18} />{quality}<b>{count}</b></span>)}
-                </div>
-                <div className="review-section-heading moments-heading"><h3>Key moments</h3><span>{fullReview.moments.length}</span></div>
-                {fullReview.moments.length ? (
-                  <div className="moment-list">
-                    {fullReview.moments.map((moment) => (
-                      <div className="moment-row" key={moment.index}>
-                        <button className="moment-item" onClick={() => jumpToMove(moment.index + 1)}>
-                          <QualityIcon quality={moment.quality} size={23} />
-                          <span><b>{moment.color === "w" ? "White" : "Black"} · {Math.floor(moment.index / 2) + 1}{moment.color === "w" ? "." : "..."} {moveHistory[moment.index]}</b><small>{moment.quality} · {(moment.expectedPointsLoss * 100).toFixed(0)} expected-point loss</small></span>
-                          <span className="moment-arrow">→</span>
-                        </button>
-                        {["Inaccuracy", "Mistake", "Miss", "Blunder"].includes(moment.quality) && <button className="retry-link" onClick={() => retryMistake(moment.index)}>Retry</button>}
-                      </div>
-                    ))}
+                <details className="report-details">
+                  <summary>Move breakdown &amp; key moments <span>{fullReview.moves.length} moves · {fullReview.moments.length} moments</span></summary>
+                  <p className="classification-note">Standard labels use expected-points-loss bands published by Chess.com. Special labels use engine-based app rules.</p>
+                  <div className="quality-counts">
+                    {moveQualityCounts.map(({ quality, count }) => <span className="quality-count" key={quality}><QualityIcon quality={quality} size={18} />{quality}<b>{count}</b></span>)}
                   </div>
-                ) : <p className="empty-state">No major turning points were flagged by this review.</p>}
+                  <div className="review-section-heading moments-heading"><h3>Key moments</h3><span>{fullReview.moments.length}</span></div>
+                  {fullReview.moments.length ? (
+                    <div className="moment-list">
+                      {fullReview.moments.map((moment) => (
+                        <div className="moment-row" key={moment.index}>
+                          <button className="moment-item" onClick={() => jumpToMove(moment.index + 1)}>
+                            <QualityIcon quality={moment.quality} size={23} />
+                            <span><b>{moment.color === "w" ? "White" : "Black"} · {Math.floor(moment.index / 2) + 1}{moment.color === "w" ? "." : "..."} {moveHistory[moment.index]}</b><small>{moment.quality} · {(moment.expectedPointsLoss * 100).toFixed(0)} expected-point loss</small></span>
+                            <span className="moment-arrow">→</span>
+                          </button>
+                          {["Inaccuracy", "Mistake", "Miss", "Blunder"].includes(moment.quality) && <button className="retry-link" onClick={() => retryMistake(moment.index)}>Retry</button>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="empty-state">No major turning points were flagged by this review.</p>}
+                </details>
               </>
             ) : reviewState.status === "running" ? (
               <p className="review-hint">Stockfish is checking each move in the background. You can keep using the board.</p>
